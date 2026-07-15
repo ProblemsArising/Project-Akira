@@ -23,6 +23,8 @@ open VseeFace and import model and start
 go to settings and change osc/vmc reciever on  
 Start assistant.py  
   
+
+## Base Project completed as v0
   
 ## Development Roadmap
 
