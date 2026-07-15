@@ -2,6 +2,8 @@
 Local AI companion
 
 ## Set Up:
+Python 3.10.11 was used creating this project, I recommend this version for compatability.
+pip install -r requirements.txt
   
 ### Basic tts only
 Download LM Studio and set up a local server  
