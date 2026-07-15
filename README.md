@@ -22,3 +22,67 @@ Download VSeeFace and find or make vrm model. You can make a vrm model with vroi
 open VseeFace and import model and start  
 go to settings and change osc/vmc reciever on  
 Start assistant.py  
+  
+  
+## Development Roadmap
+
+### v0.1 — Application Foundation
+
+- [ ] Central settings system
+- [ ] Reusable conversation service
+- [ ] SQLite chat history
+- [ ] Text-message support
+- [ ] Start/stop listening controls
+- [ ] Audio-device selection
+
+### v0.2 — WebUI
+
+- [ ] Chat interface
+- [ ] Settings interface
+- [ ] Conversation history viewer
+- [ ] Personality editor
+- [ ] Model and device selectors
+- [ ] Live status updates
+
+### v0.3 — Desktop Application
+
+- [ ] One-click Windows launcher
+- [ ] Separate avatar window
+- [ ] System tray support
+- [ ] Remember window positions
+- [ ] Optional launch on startup
+- [ ] Windows installer
+
+### v0.4 — Built-in Avatar
+
+- [ ] Embedded VRM renderer
+- [ ] Mouth visemes
+- [ ] Facial expressions
+- [ ] Idle animation
+- [ ] Body poses
+- [ ] Optional VMC compatibility
+
+### v0.5 — Built-in LLM
+
+- [ ] LLM backend interface
+- [ ] LM Studio support
+- [ ] Managed llama.cpp backend
+- [ ] Model downloader
+- [ ] Hardware presets
+
+### v0.6 — Built-in Voice Conversion
+
+- [ ] TTS audio generation
+- [ ] Internal RVC inference
+- [ ] Direct audio playback
+- [ ] Audio-driven lip sync
+- [ ] Remove VB-CABLE dependency
+
+### v0.7 — Minecraft Integration
+
+- [ ] Connect second account
+- [ ] Follow and wait commands
+- [ ] Basic navigation
+- [ ] Resource collection
+- [ ] In-game chat
+- [ ] LLM action planning
