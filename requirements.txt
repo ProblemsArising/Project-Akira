@@ -1,0 +1,10 @@
+openai
+faster-whisper
+ctranslate2
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+sounddevice
+numpy
+scipy
+pyttsx3
+python-osc
