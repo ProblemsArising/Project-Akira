@@ -7,6 +7,26 @@ import unittest
 from app.conversation import ConversationResult, ConversationService
 
 
+class FakeHistoryStore:
+    def __init__(self):
+        self.created = []
+        self.turns = []
+        self.next_id = 1
+
+    def create_conversation(self, title=None):
+        conversation_id = self.next_id
+        self.next_id += 1
+        self.created.append((conversation_id, title))
+        return conversation_id
+
+    def record_turn(self, **values):
+        conversation_id = values["conversation_id"]
+        if conversation_id is None:
+            conversation_id = self.create_conversation(values.get("title"))
+        self.turns.append({**values, "conversation_id": conversation_id})
+        return conversation_id, len(self.turns)
+
+
 class ConversationServiceTests(unittest.TestCase):
     def make_service(self, **overrides):
         calls = {
@@ -128,6 +148,71 @@ class ConversationServiceTests(unittest.TestCase):
         release.set()
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
+
+    def test_successful_turn_is_saved_to_history(self):
+        history = FakeHistoryStore()
+        service, _ = self.make_service(history_store=history)
+
+        result = service.process_text("Remember this", speak=False)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(service.current_conversation_id, 1)
+        self.assertEqual(len(history.turns), 1)
+        self.assertEqual(history.turns[0]["user_text"], "Remember this")
+        self.assertEqual(history.turns[0]["assistant_text"], "Hi there")
+        self.assertEqual(history.turns[0]["source"], "text")
+        self.assertFalse(history.turns[0]["spoken"])
+
+    def test_voice_and_text_turns_share_current_history_conversation(self):
+        history = FakeHistoryStore()
+        service, _ = self.make_service(history_store=history)
+
+        service.process_text("Typed first", speak=False)
+        service.process_voice_once()
+
+        self.assertEqual(len(history.turns), 2)
+        self.assertEqual(history.turns[0]["conversation_id"], 1)
+        self.assertEqual(history.turns[1]["conversation_id"], 1)
+        self.assertEqual(history.turns[1]["source"], "voice")
+
+    def test_start_new_conversation_changes_history_id(self):
+        history = FakeHistoryStore()
+        service, _ = self.make_service(history_store=history)
+
+        service.process_text("First", speak=False)
+        second_id = service.start_new_conversation("Second chat")
+        service.process_text("Second", speak=False)
+
+        self.assertEqual(second_id, 2)
+        self.assertEqual(history.created[-1], (2, "Second chat"))
+        self.assertEqual(history.turns[-1]["conversation_id"], 2)
+
+    def test_history_can_be_disabled(self):
+        service, _ = self.make_service(history_store=None)
+
+        result = service.process_text("No database", speak=False)
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(service.current_conversation_id)
+
+    def test_history_failure_does_not_lose_completed_reply(self):
+        class BrokenHistoryStore(FakeHistoryStore):
+            def record_turn(self, **values):
+                raise RuntimeError("database unavailable")
+
+        errors = []
+        service, calls = self.make_service(
+            history_store=BrokenHistoryStore(),
+            on_history_error=errors.append,
+        )
+
+        result = service.process_text("Still reply", speak=False)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.reply, "Hi there")
+        self.assertEqual(calls["printed"], ["Hi there"])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(str(errors[0]), "database unavailable")
 
 
 if __name__ == "__main__":
