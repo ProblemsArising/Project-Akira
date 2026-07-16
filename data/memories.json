@@ -1,4 +1,30 @@
 {
   "facts": [],
-  "turns": []
+  "turns": [
+    {
+      "time": "2026-07-15T21:26:26",
+      "user": "Hello there",
+      "assistant": ""
+    },
+    {
+      "time": "2026-07-15T21:29:31",
+      "user": "Check",
+      "assistant": ""
+    },
+    {
+      "time": "2026-07-15T21:37:59",
+      "user": "Hello there",
+      "assistant": ""
+    },
+    {
+      "time": "2026-07-15T21:40:06",
+      "user": "Cut low.",
+      "assistant": ""
+    },
+    {
+      "time": "2026-07-15T21:43:11",
+      "user": "Hello",
+      "assistant": "Hey there! What are we getting into today? Are we diving into a new game, or do you have some projects on your mind?"
+    }
+  ]
 }

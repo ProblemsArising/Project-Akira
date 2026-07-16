@@ -37,8 +37,9 @@ whisper = WhisperModel(
 )
 
 
-def transcribe():
-    segments, _ = whisper.transcribe(AUDIO_FILE)
+def transcribe(audio_file: str = AUDIO_FILE):
+    """Transcribe an audio file and return the combined text."""
+    segments, _ = whisper.transcribe(audio_file)
     text = " ".join(segment.text.strip() for segment in segments)
     print("You said:", text)
     return text
