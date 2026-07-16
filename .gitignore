@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime-generated Project Akira data
+data/settings.json
+data/settings.broken-*.json
+input.wav
+
+# Editors and logs
+.vscode/
+.idea/
+*.log

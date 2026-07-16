@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "general": {
+    "launch_on_startup": false,
+    "open_avatar_window": true,
+    "avatar_always_on_top": false,
+    "remember_window_positions": true
+  },
+  "llm": {
+    "backend": "lm_studio",
+    "base_url": "http://localhost:1234/v1",
+    "api_key": "None",
+    "model": "gemma4-12b-qat-uncensored-hauhaucs-balanced",
+    "temperature": 0.75,
+    "top_p": 0.9,
+    "max_tokens": 180,
+    "max_short_term_messages": 20
+  },
+  "stt": {
+    "model": "base",
+    "device": "cuda",
+    "compute_type": "float16",
+    "language": null
+  },
+  "audio": {
+    "input_device": null,
+    "output_device": null,
+    "sample_rate": 16000,
+    "channels": 1,
+    "frame_ms": 30,
+    "pre_roll_seconds": 0.35,
+    "end_silence_seconds": 2.0,
+    "min_record_seconds": 0.45,
+    "max_record_seconds": 45.0,
+    "calibration_seconds": 0.6,
+    "start_threshold_multiplier": 6.0,
+    "end_threshold_multiplier": 1.8,
+    "min_start_threshold": 0.02,
+    "min_end_threshold": 0.006
+  },
+  "tts": {
+    "voice_index": 1,
+    "rate": 175,
+    "volume": 1.0
+  },
+  "avatar": {
+    "enabled": true,
+    "backend": "vmc",
+    "vmc_ip": "127.0.0.1",
+    "vmc_port": 39539,
+    "face_blend_fps": 120,
+    "mouth_start_delay_seconds": 1.15,
+    "mouth_end_delay_seconds": 0.05
+  },
+  "memory": {
+    "max_turns": 300,
+    "max_facts": 200,
+    "max_context_chars": 2500,
+    "recent_turns": 6,
+    "relevant_limit": 6
+  }
+}
