@@ -1,20 +1,17 @@
-from audio.microphone import record_audio
-from audio.whisper_stt import transcribe
-from ai.llm import ask_ai
-from audio.tts import tts
+"""Command-line launcher for Project Akira."""
 
-while True:
-    audio_file = record_audio()
-    if not audio_file:
-        continue
+from app.conversation import ConversationService
 
-    text = transcribe()
 
-    if not text:
-        continue
+def main() -> None:
+    service = ConversationService.from_default_components()
 
-    reply = ask_ai(text)
+    try:
+        service.run_voice_loop()
+    except KeyboardInterrupt:
+        service.request_stop()
+        print("\n👋 Stopping Project Akira...")
 
-    print(reply)
 
-    tts(reply)
+if __name__ == "__main__":
+    main()

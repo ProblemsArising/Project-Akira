@@ -66,7 +66,7 @@ def ask_ai(prompt):
         messages=api_messages,
         temperature=0.75,
         top_p=0.9,
-        max_tokens=180,
+        max_tokens=512,
         stop=[
             "\nUser:",
             "\nUSER:",
