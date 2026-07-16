@@ -30,6 +30,16 @@
       "time": "2026-07-16T10:27:10",
       "user": "Hey there.",
       "assistant": "Hey! I'm ready whenever you are. What's on your mind today? Are we diving into a new game, or do you have some projects you want to work on?"
+    },
+    {
+      "time": "2026-07-16T10:41:13",
+      "user": "Hey There.",
+      "assistant": "Hey there! You've got my full attention. What are we doing first today, jumping into a game or tackling some of your projects?"
+    },
+    {
+      "time": "2026-07-16T10:42:49",
+      "user": "hey there",
+      "assistant": "Hey there! I'm all set and ready to hang out with you. What are we tackling first today, a new game or one of your projects?"
     }
   ]
 }

@@ -95,11 +95,20 @@ class ConversationService:
         self._stop_event = threading.Event()
         self._running = False
 
+    @staticmethod
+    def _add_default_history(kwargs: dict[str, object]) -> None:
+        """Add the default SQLite history store unless one was supplied."""
+
+        if "history_store" not in kwargs:
+            from app.history import get_history_store
+
+            kwargs["history_store"] = get_history_store()
+
     @classmethod
     def from_default_components(cls, **kwargs: object) -> "ConversationService":
-        """Create the service using Project Akira's current production modules.
+        """Create the service using the complete production voice pipeline.
 
-        Imports are intentionally local.  Merely importing this service should
+        Imports are intentionally local. Merely importing this service should
         not initialize Faster-Whisper, CUDA, pyttsx3, or the VMC avatar.
         """
 
@@ -108,16 +117,46 @@ class ConversationService:
         from audio.tts import tts
         from audio.whisper_stt import transcribe
 
-        if "history_store" not in kwargs:
-            from app.history import get_history_store
-
-            kwargs["history_store"] = get_history_store()
+        cls._add_default_history(kwargs)
 
         return cls(
             recorder=record_audio,
             transcriber=transcribe,
             responder=ask_ai,
             speaker=tts,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_text_components(
+        cls,
+        *,
+        enable_speech: bool = True,
+        **kwargs: object,
+    ) -> "ConversationService":
+        """Create a text-only service without importing microphone or Whisper.
+
+        When ``enable_speech`` is false, pyttsx3 and the avatar controller are
+        not imported either. This gives the future WebUI a lightweight typed
+        chat path and lets text-only users run Akira without audio input setup.
+        """
+
+        from ai.llm import ask_ai
+
+        if enable_speech:
+            from audio.tts import tts
+
+            speaker: Speaker = tts
+        else:
+            speaker = lambda reply: None
+
+        cls._add_default_history(kwargs)
+
+        return cls(
+            recorder=lambda: None,
+            transcriber=lambda audio_file: "",
+            responder=ask_ai,
+            speaker=speaker,
             **kwargs,
         )
 
