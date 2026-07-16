@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from unittest import mock
 
 from app.conversation import ConversationResult, ConversationService
 
@@ -213,6 +214,29 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(calls["printed"], ["Hi there"])
         self.assertEqual(len(errors), 1)
         self.assertEqual(str(errors[0]), "database unavailable")
+
+
+    def test_text_factory_uses_noop_voice_components_when_speech_disabled(self):
+        with mock.patch.dict(
+            "sys.modules",
+            {
+                "ai.llm": mock.Mock(ask_ai=lambda text: "Reply"),
+            },
+        ), mock.patch.object(
+            ConversationService,
+            "_add_default_history",
+        ):
+            service = ConversationService.from_text_components(
+                enable_speech=False,
+                history_store=None,
+                on_reply=None,
+            )
+
+        self.assertIsNone(service.process_voice_once())
+        result = service.process_text("Hello", speak=False)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.reply, "Reply")
+
 
 
 if __name__ == "__main__":

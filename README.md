@@ -10,6 +10,23 @@ Download LM Studio and set up a local server
 IF Needed, make api key and put it llm.py  
 run the project assistant.py  
 
+
+### Text chat
+
+Use interactive typed chat instead of microphone input:
+
+```powershell
+python assistant.py --text
+```
+
+Send one typed message and exit:
+
+```powershell
+python assistant.py --message "Hello, Akira"
+```
+
+Add `--no-speak` to either command to disable TTS for typed replies.
+
 ### Add Voice Changer
 Download Virtual Audio Cable  
 Download https://github.com/w-okada/voice-changer  
