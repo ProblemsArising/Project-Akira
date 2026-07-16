@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable, Literal, Protocol
 
 ConversationSource = Literal["voice", "text"]
 Recorder = Callable[[], str | None]
@@ -25,6 +25,25 @@ Responder = Callable[[str], str]
 Speaker = Callable[[str], None]
 MessageCallback = Callable[[str], None]
 ResultCallback = Callable[["ConversationResult"], None]
+HistoryErrorCallback = Callable[[Exception], None]
+
+
+class HistoryStore(Protocol):
+    """Minimum history API required by ``ConversationService``."""
+
+    def record_turn(
+        self,
+        *,
+        conversation_id: int | None,
+        user_text: str,
+        assistant_text: str,
+        source: ConversationSource,
+        audio_file: str | None = None,
+        spoken: bool = False,
+        title: str | None = None,
+    ) -> tuple[int, int]: ...
+
+    def create_conversation(self, title: str | None = None) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +75,9 @@ class ConversationService:
         on_user_text: MessageCallback | None = None,
         on_reply: MessageCallback | None = print,
         on_result: ResultCallback | None = None,
+        history_store: HistoryStore | None = None,
+        conversation_id: int | None = None,
+        on_history_error: HistoryErrorCallback | None = None,
     ) -> None:
         self._recorder = recorder
         self._transcriber = transcriber
@@ -64,6 +86,9 @@ class ConversationService:
         self._on_user_text = on_user_text
         self._on_reply = on_reply
         self._on_result = on_result
+        self._history_store = history_store
+        self._conversation_id = conversation_id
+        self._on_history_error = on_history_error
 
         self._turn_lock = threading.RLock()
         self._state_lock = threading.RLock()
@@ -83,6 +108,11 @@ class ConversationService:
         from audio.tts import tts
         from audio.whisper_stt import transcribe
 
+        if "history_store" not in kwargs:
+            from app.history import get_history_store
+
+            kwargs["history_store"] = get_history_store()
+
         return cls(
             recorder=record_audio,
             transcriber=transcribe,
@@ -90,6 +120,30 @@ class ConversationService:
             speaker=tts,
             **kwargs,
         )
+
+    @property
+    def current_conversation_id(self) -> int | None:
+        """Database ID used by the current service session."""
+
+        with self._state_lock:
+            return self._conversation_id
+
+    def start_new_conversation(self, title: str | None = None) -> int | None:
+        """Start a new history conversation for subsequent turns.
+
+        Returns the new database ID, or ``None`` when history is disabled.
+        """
+
+        with self._turn_lock:
+            if self._history_store is None:
+                with self._state_lock:
+                    self._conversation_id = None
+                return None
+
+            conversation_id = self._history_store.create_conversation(title)
+            with self._state_lock:
+                self._conversation_id = conversation_id
+            return conversation_id
 
     @property
     def is_running(self) -> bool:
@@ -147,10 +201,42 @@ class ConversationService:
                 spoken=spoken,
             )
 
+            self._save_to_history(result)
+
             if self._on_result is not None:
                 self._on_result(result)
 
             return result
+
+    def _save_to_history(self, result: ConversationResult) -> None:
+        if self._history_store is None:
+            return
+
+        with self._state_lock:
+            current_id = self._conversation_id
+
+        try:
+            conversation_id, _ = self._history_store.record_turn(
+                conversation_id=current_id,
+                user_text=result.user_text,
+                assistant_text=result.reply,
+                source=result.source,
+                audio_file=result.audio_file,
+                spoken=result.spoken,
+                title=result.user_text if current_id is None else None,
+            )
+        except Exception as error:
+            # A locked or damaged history database should not prevent Akira from
+            # finishing a conversation turn. The WebUI can replace this callback
+            # with a visible notification later.
+            if self._on_history_error is not None:
+                self._on_history_error(error)
+            else:
+                print(f"⚠️ Could not save chat history: {error}")
+            return
+
+        with self._state_lock:
+            self._conversation_id = conversation_id
 
     def process_voice_once(self) -> ConversationResult | None:
         """Record and process one microphone turn.
