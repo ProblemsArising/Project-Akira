@@ -8,3 +8,7 @@ numpy
 scipy
 pyttsx3
 python-osc
+fastapi
+uvicorn
+httpx
+httpx2>=2.0.0
