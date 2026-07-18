@@ -73,6 +73,23 @@ class AssistantCliTests(unittest.TestCase):
         service.run_voice_loop.assert_not_called()
 
 
+    @patch("assistant._audio_device_command", return_value=0)
+    @patch("assistant.ConversationService.from_default_components")
+    def test_devices_mode_skips_conversation_service(self, factory, command):
+        exit_code = assistant.main(["--devices"])
+
+        self.assertEqual(exit_code, 0)
+        command.assert_called_once()
+        factory.assert_not_called()
+
+    @patch("assistant._audio_device_command", return_value=0)
+    def test_set_output_device_uses_audio_device_command(self, command):
+        exit_code = assistant.main(["--set-output-device", "CABLE Input"])
+
+        self.assertEqual(exit_code, 0)
+        arguments = command.call_args.args[0]
+        self.assertEqual(arguments.set_output_device, "CABLE Input")
+
 
 if __name__ == "__main__":
     unittest.main()

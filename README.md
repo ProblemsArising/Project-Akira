@@ -39,6 +39,25 @@ background listening API that the future WebUI will use.
 
 Add `--no-speak` to either command to disable TTS for typed replies.
 
+### Audio devices
+
+List available microphones and output devices:
+
+```powershell
+python assistant.py --devices
+```
+
+Select devices by index or unique name, then optionally test output:
+
+```powershell
+python assistant.py --set-input-device 3
+python assistant.py --set-output-device "CABLE Input"
+python assistant.py --test-output
+```
+
+Use `default` to restore normal Windows default routing. See
+[`docs/audio_devices.md`](docs/audio_devices.md) for details.
+
 ### Add Voice Changer
 Download Virtual Audio Cable  
 Download https://github.com/w-okada/voice-changer  

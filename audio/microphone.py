@@ -92,6 +92,7 @@ def record_audio(
     output_file: str = AUDIO_FILE,
     *,
     stop_event: threading.Event | None = None,
+    input_device: int | str | None = None,
 ) -> str | None:
     """Record from the microphone until speech ends or recording is cancelled.
 
@@ -114,6 +115,7 @@ def record_audio(
     last_speech_time = None
 
     with sd.InputStream(
+        device=input_device,
         samplerate=SAMPLE_RATE,
         channels=CHANNELS,
         dtype="float32",
@@ -203,8 +205,14 @@ class MicrophoneRecorder:
     to Start Listening and Stop Listening buttons in the future WebUI.
     """
 
-    def __init__(self, output_file: str = AUDIO_FILE) -> None:
+    def __init__(
+        self,
+        output_file: str = AUDIO_FILE,
+        *,
+        input_device: int | str | None = None,
+    ) -> None:
         self.output_file = output_file
+        self.input_device = input_device
         self._stop_event = threading.Event()
 
     @property
@@ -212,7 +220,16 @@ class MicrophoneRecorder:
         return self._stop_event.is_set()
 
     def record(self) -> str | None:
-        return record_audio(self.output_file, stop_event=self._stop_event)
+        return record_audio(
+            self.output_file,
+            stop_event=self._stop_event,
+            input_device=self.input_device,
+        )
+
+    def set_input_device(self, input_device: int | str | None) -> None:
+        """Use a different microphone for future recording calls."""
+
+        self.input_device = input_device
 
     def request_stop(self) -> None:
         self._stop_event.set()

@@ -123,18 +123,29 @@ class ConversationService:
         """
 
         from ai.llm import ask_ai
+        from audio.devices import resolve_audio_device
         from audio.microphone import MicrophoneRecorder
-        from audio.tts import tts
+        from audio.tts import create_speaker
         from audio.whisper_stt import transcribe
+        from config.settings import get_settings
 
-        microphone = MicrophoneRecorder()
+        settings = get_settings()
+        input_selection = resolve_audio_device(settings.audio.input_device, "input")
+        output_selection = resolve_audio_device(settings.audio.output_device, "output")
+
+        microphone = MicrophoneRecorder(
+            input_device=None if input_selection is None else input_selection.index,
+        )
+        speaker = create_speaker(
+            output_device=None if output_selection is None else output_selection.index,
+        )
         cls._add_default_history(kwargs)
 
         return cls(
             recorder=microphone.record,
             transcriber=transcribe,
             responder=ask_ai,
-            speaker=tts,
+            speaker=speaker,
             stop_recorder=microphone.request_stop,
             reset_recorder=microphone.reset,
             **kwargs,
@@ -157,9 +168,15 @@ class ConversationService:
         from ai.llm import ask_ai
 
         if enable_speech:
-            from audio.tts import tts
+            from audio.devices import resolve_audio_device
+            from audio.tts import create_speaker
+            from config.settings import get_settings
 
-            speaker: Speaker = tts
+            settings = get_settings()
+            output_selection = resolve_audio_device(settings.audio.output_device, "output")
+            speaker: Speaker = create_speaker(
+                output_device=None if output_selection is None else output_selection.index,
+            )
         else:
             speaker = lambda reply: None
 
