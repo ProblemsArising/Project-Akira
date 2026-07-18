@@ -58,5 +58,21 @@ class AssistantCliTests(unittest.TestCase):
         service.run_voice_loop.assert_not_called()
 
 
+    @patch("assistant.ListeningControlSession")
+    @patch("assistant.ConversationService.from_default_components")
+    def test_controls_mode_runs_listening_control_session(self, factory, session_class):
+        service = Mock()
+        factory.return_value = service
+
+        exit_code = assistant.main(["--controls"])
+
+        self.assertEqual(exit_code, 0)
+        factory.assert_called_once()
+        session_class.assert_called_once_with(service=service)
+        session_class.return_value.run.assert_called_once_with()
+        service.run_voice_loop.assert_not_called()
+
+
+
 if __name__ == "__main__":
     unittest.main()

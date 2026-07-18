@@ -25,6 +25,18 @@ Send one typed message and exit:
 python assistant.py --message "Hello, Akira"
 ```
 
+### Listening controls
+
+Open temporary terminal controls for starting, stopping, and checking the
+microphone listener:
+
+```powershell
+python assistant.py --controls
+```
+
+Use `start`, `stop`, `status`, or `quit`. These commands exercise the same
+background listening API that the future WebUI will use.
+
 Add `--no-speak` to either command to disable TTS for typed replies.
 
 ### Add Voice Changer

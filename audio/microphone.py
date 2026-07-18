@@ -1,4 +1,9 @@
+"""Microphone recording with simple energy-based voice activity detection."""
+
+from __future__ import annotations
+
 from collections import deque
+import threading
 import time
 
 import numpy as np
@@ -38,16 +43,31 @@ MIN_END_THRESHOLD = 0.006
 
 def _rms(frame: np.ndarray) -> float:
     """Return root-mean-square volume for a frame of float audio."""
+
     frame = np.asarray(frame, dtype=np.float32)
     return float(np.sqrt(np.mean(np.square(frame))))
 
 
-def _record_noise_floor(stream: sd.InputStream) -> float:
-    """Listen briefly and estimate the room/mic noise floor."""
+def _stop_requested(stop_event: threading.Event | None) -> bool:
+    return stop_event is not None and stop_event.is_set()
+
+
+def _record_noise_floor(
+    stream: sd.InputStream,
+    stop_event: threading.Event | None = None,
+) -> float | None:
+    """Listen briefly and estimate the room/mic noise floor.
+
+    ``None`` means recording was cancelled while calibrating.
+    """
+
     rms_values = []
     frames_needed = max(1, int(CALIBRATION_SECONDS * SAMPLE_RATE / FRAME_SIZE))
 
     for _ in range(frames_needed):
+        if _stop_requested(stop_event):
+            return None
+
         frame, overflowed = stream.read(FRAME_SIZE)
         if overflowed:
             continue
@@ -62,17 +82,27 @@ def _record_noise_floor(stream: sd.InputStream) -> float:
 
 def _float_to_int16(audio: np.ndarray) -> np.ndarray:
     """Convert sounddevice float32 audio in [-1, 1] to normal 16-bit WAV PCM."""
+
     audio = np.asarray(audio, dtype=np.float32)
     audio = np.clip(audio, -1.0, 1.0)
     return (audio * 32767).astype(np.int16)
 
 
-def record_audio(output_file: str = AUDIO_FILE) -> str | None:
-    """
-    Record from the microphone until you stop talking.
+def record_audio(
+    output_file: str = AUDIO_FILE,
+    *,
+    stop_event: threading.Event | None = None,
+) -> str | None:
+    """Record from the microphone until speech ends or recording is cancelled.
 
-    Returns the saved WAV filename, or None if no usable speech was captured.
+    Returns the saved WAV filename, or ``None`` if no usable speech was captured.
+    When ``stop_event`` is set, the active recording is discarded so pressing a
+    Stop Listening control cannot accidentally submit a partial sentence.
     """
+
+    if _stop_requested(stop_event):
+        return None
+
     print("\n🎤 Listening... start talking when ready. Press Ctrl+C to stop.")
 
     pre_roll_frames = max(1, int(PRE_ROLL_SECONDS * SAMPLE_RATE / FRAME_SIZE))
@@ -89,7 +119,11 @@ def record_audio(output_file: str = AUDIO_FILE) -> str | None:
         dtype="float32",
         blocksize=FRAME_SIZE,
     ) as stream:
-        noise_floor = _record_noise_floor(stream)
+        noise_floor = _record_noise_floor(stream, stop_event)
+        if noise_floor is None:
+            print("⏹️ Listening stopped.")
+            return None
+
         start_threshold = max(noise_floor * START_THRESHOLD_MULTIPLIER, MIN_START_THRESHOLD)
         end_threshold = max(noise_floor * END_THRESHOLD_MULTIPLIER, MIN_END_THRESHOLD)
 
@@ -99,6 +133,10 @@ def record_audio(output_file: str = AUDIO_FILE) -> str | None:
         )
 
         while True:
+            if _stop_requested(stop_event):
+                print("⏹️ Listening stopped.")
+                return None
+
             frame, overflowed = stream.read(FRAME_SIZE)
             if overflowed:
                 print("⚠️ Mic buffer overflowed; continuing...")
@@ -125,6 +163,7 @@ def record_audio(output_file: str = AUDIO_FILE) -> str | None:
             if volume >= end_threshold:
                 last_speech_time = now
 
+            # These values are guaranteed to be populated once speech starts.
             recording_duration = now - speech_start_time
             silence_duration = now - last_speech_time
 
@@ -137,6 +176,10 @@ def record_audio(output_file: str = AUDIO_FILE) -> str | None:
             if recording_duration >= MAX_RECORD_SECONDS:
                 print("⏱️ Max recording length reached; saving what was captured.")
                 break
+
+    if _stop_requested(stop_event):
+        print("⏹️ Listening stopped.")
+        return None
 
     if not recorded_frames:
         print("🤫 No speech captured.")
@@ -151,3 +194,28 @@ def record_audio(output_file: str = AUDIO_FILE) -> str | None:
     wav.write(output_file, SAMPLE_RATE, _float_to_int16(audio))
     print(f"✅ Saved audio: {output_file}")
     return output_file
+
+
+class MicrophoneRecorder:
+    """Interruptible recorder used by ``ConversationService``.
+
+    A single instance can be stopped and later reset/reused, which maps cleanly
+    to Start Listening and Stop Listening buttons in the future WebUI.
+    """
+
+    def __init__(self, output_file: str = AUDIO_FILE) -> None:
+        self.output_file = output_file
+        self._stop_event = threading.Event()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop_event.is_set()
+
+    def record(self) -> str | None:
+        return record_audio(self.output_file, stop_event=self._stop_event)
+
+    def request_stop(self) -> None:
+        self._stop_event.set()
+
+    def reset(self) -> None:
+        self._stop_event.clear()
