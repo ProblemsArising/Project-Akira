@@ -8,21 +8,33 @@ loaded lazily only when an endpoint first needs the conversation service.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
-from typing import Any, Callable, Iterator, Protocol
+from typing import Any, AsyncIterator, Callable, Mapping, Protocol
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.conversation import ConversationResult, ConversationService
+from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
 from config.settings import get_settings
 
 
 class ConversationServiceLike(Protocol):
-    """Subset of ``ConversationService`` used by the HTTP backend."""
+    """Subset of ``ConversationService`` used by the backend."""
 
     @property
     def current_conversation_id(self) -> int | None: ...
@@ -61,18 +73,20 @@ HistoryFactory = Callable[[], ChatHistoryStore]
 
 
 class BackendRuntime:
-    """Own lazily-created backend services shared by all HTTP requests."""
+    """Own lazily-created services and the process-wide WebSocket event hub."""
 
     def __init__(
         self,
         *,
         service_factory: ServiceFactory | None = None,
         history_factory: HistoryFactory = get_history_store,
+        event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
         self._history_factory = history_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
+        self._events = event_hub or EventHub()
         self._lock = threading.RLock()
 
     @property
@@ -81,23 +95,44 @@ class BackendRuntime:
             return self._service is not None
 
     @property
+    def events(self) -> EventHub:
+        return self._events
+
+    @property
     def history(self) -> ChatHistoryStore:
         with self._lock:
             if self._history is None:
                 self._history = self._history_factory()
             return self._history
 
+    def _publish_service_event(
+        self,
+        event_type: str,
+        data: Mapping[str, Any],
+    ) -> None:
+        payload = dict(data)
+        with self._lock:
+            service = self._service
+        if service is not None:
+            payload.setdefault("conversation_id", service.current_conversation_id)
+        self._events.publish(event_type, payload)
+
     @property
     def service(self) -> ConversationServiceLike:
         with self._lock:
             if self._service is None:
                 if self._service_factory is not None:
-                    self._service = self._service_factory()
+                    service = self._service_factory()
                 else:
-                    self._service = ConversationService.from_default_components(
+                    service = ConversationService.from_default_components(
                         on_reply=None,
                         history_store=self.history,
                     )
+
+                self._service = service
+                add_listener = getattr(service, "add_event_listener", None)
+                if callable(add_listener):
+                    add_listener(self._publish_service_event)
             return self._service
 
     def status(self) -> dict[str, Any]:
@@ -110,13 +145,17 @@ class BackendRuntime:
                 "conversation_id": (
                     None if service is None else service.current_conversation_id
                 ),
+                "event_clients": self._events.subscriber_count,
             }
 
     def shutdown(self) -> None:
         with self._lock:
             service = self._service
+
+        self._events.publish("system.shutdown", self.status())
         if service is not None:
             service.request_stop()
+        self._events.close()
 
 
 class StrictModel(BaseModel):
@@ -135,6 +174,7 @@ class StatusResponse(StrictModel):
     is_running: bool
     is_listening: bool
     conversation_id: int | None
+    event_clients: int
 
 
 class ChatRequest(StrictModel):
@@ -200,6 +240,75 @@ def _service_error(error: Exception) -> HTTPException:
     )
 
 
+async def _send_websocket_events(
+    websocket: WebSocket,
+    subscription: EventSubscription,
+) -> None:
+    while True:
+        event = await subscription.receive()
+        await websocket.send_json(event)
+
+
+async def _receive_websocket_commands(
+    websocket: WebSocket,
+    subscription: EventSubscription,
+    runtime: BackendRuntime,
+) -> None:
+    """Handle tiny connection-level commands; app actions remain HTTP calls."""
+
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+
+        raw_text = message.get("text")
+        if raw_text is None:
+            await subscription.send_direct(
+                runtime.events.create_event(
+                    "connection.error",
+                    {"error": "Only JSON text messages are supported."},
+                )
+            )
+            continue
+
+        try:
+            payload = json.loads(raw_text)
+        except (TypeError, json.JSONDecodeError):
+            await subscription.send_direct(
+                runtime.events.create_event(
+                    "connection.error",
+                    {"error": "WebSocket command must be valid JSON."},
+                )
+            )
+            continue
+
+        command = payload.get("type") if isinstance(payload, dict) else None
+        if command == "ping":
+            await subscription.send_direct(
+                runtime.events.create_event(
+                    "connection.pong",
+                    {"echo": payload.get("data")},
+                )
+            )
+        elif command == "status":
+            await subscription.send_direct(
+                runtime.events.create_event(
+                    "status.snapshot",
+                    runtime.status(),
+                )
+            )
+        else:
+            await subscription.send_direct(
+                runtime.events.create_event(
+                    "connection.error",
+                    {
+                        "error": "Unknown WebSocket command.",
+                        "supported": ["ping", "status"],
+                    },
+                )
+            )
+
+
 def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     """Create the FastAPI application.
 
@@ -210,7 +319,7 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     backend_runtime = runtime or BackendRuntime()
 
     @asynccontextmanager
-    async def lifespan(application: FastAPI) -> Iterator[None]:
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.runtime = backend_runtime
         try:
             yield
@@ -221,8 +330,8 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         title="Project Akira API",
         version="0.2.0-alpha",
         description=(
-            "Local HTTP backend for Project Akira's chat, listening controls, "
-            "settings, and conversation history."
+            "Local HTTP and WebSocket backend for Project Akira's chat, "
+            "listening controls, settings, conversation history, and live state."
         ),
         lifespan=lifespan,
     )
@@ -236,6 +345,55 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> StatusResponse:
         return StatusResponse(**active_runtime.status())
+
+    @application.websocket("/api/events")
+    async def websocket_events(websocket: WebSocket) -> None:
+        await websocket.accept()
+        try:
+            subscription = backend_runtime.events.subscribe()
+        except EventStreamClosed:
+            await websocket.close(code=1012, reason="Event system is shutting down")
+            return
+
+        await subscription.send_direct(
+            backend_runtime.events.create_event(
+                "connection.ready",
+                {
+                    "status": backend_runtime.status(),
+                    "commands": ["ping", "status"],
+                },
+            )
+        )
+
+        sender = asyncio.create_task(
+            _send_websocket_events(websocket, subscription),
+            name="ProjectAkiraWebSocketSender",
+        )
+        receiver = asyncio.create_task(
+            _receive_websocket_commands(websocket, subscription, backend_runtime),
+            name="ProjectAkiraWebSocketReceiver",
+        )
+
+        try:
+            done, pending = await asyncio.wait(
+                {sender, receiver},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with suppress(asyncio.CancelledError):
+                    await task
+            for task in done:
+                with suppress(
+                    asyncio.CancelledError,
+                    EventStreamClosed,
+                    WebSocketDisconnect,
+                    RuntimeError,
+                ):
+                    task.result()
+        finally:
+            subscription.close()
 
     @application.post("/api/chat", response_model=ChatResponse, tags=["chat"])
     def chat(

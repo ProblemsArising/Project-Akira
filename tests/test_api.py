@@ -22,6 +22,14 @@ class FakeConversationService:
         self.messages: list[tuple[str, bool]] = []
         self.stop_requested = False
         self.new_conversation_titles: list[str | None] = []
+        self.event_listeners = []
+
+    def add_event_listener(self, callback) -> None:
+        self.event_listeners.append(callback)
+
+    def _emit(self, event_type: str, data: dict) -> None:
+        for callback in tuple(self.event_listeners):
+            callback(event_type, data)
 
     def process_text(
         self,
@@ -32,20 +40,47 @@ class FakeConversationService:
         audio_file: str | None = None,
     ) -> ConversationResult | None:
         self.messages.append((text, speak))
+        self._emit(
+            "chat.started",
+            {"user_text": text, "source": source, "speak": speak},
+        )
         if text == "empty":
+            self._emit(
+                "chat.failed",
+                {"user_text": text, "source": source, "reason": "empty_reply"},
+            )
             return None
         self.current_conversation_id = self.current_conversation_id or 12
-        return ConversationResult(
+        result = ConversationResult(
             user_text=text,
             reply=f"reply:{text}",
             source="text",
             audio_file=audio_file,
             spoken=speak,
         )
+        self._emit(
+            "chat.reply_ready",
+            {"user_text": text, "reply": result.reply, "source": source},
+        )
+        self._emit(
+            "chat.completed",
+            {
+                "user_text": text,
+                "reply": result.reply,
+                "source": source,
+                "spoken": speak,
+                "conversation_id": self.current_conversation_id,
+            },
+        )
+        return result
 
     def start_new_conversation(self, title: str | None = None) -> int:
         self.new_conversation_titles.append(title)
         self.current_conversation_id = 99
+        self._emit(
+            "conversation.changed",
+            {"conversation_id": 99, "title": title},
+        )
         return 99
 
     def start_listening(self) -> bool:
@@ -53,6 +88,10 @@ class FakeConversationService:
             return False
         self.is_running = True
         self.is_listening = True
+        self._emit(
+            "listening.changed",
+            {"is_listening": True, "is_running": True},
+        )
         return True
 
     def stop_listening(
@@ -64,6 +103,11 @@ class FakeConversationService:
         changed = self.is_listening
         self.is_listening = False
         self.is_running = False
+        if changed:
+            self._emit(
+                "listening.changed",
+                {"is_listening": False, "is_running": False},
+            )
         return changed
 
     def request_stop(self) -> None:
@@ -192,6 +236,61 @@ class ApiBackendTests(unittest.TestCase):
             json={"message": "Hello", "unknown": True},
         )
         self.assertEqual(response.status_code, 422)
+
+    def test_websocket_ready_ping_and_status_do_not_load_service(self) -> None:
+        with self.client.websocket_connect("/api/events") as websocket:
+            ready = websocket.receive_json()
+            self.assertEqual(ready["type"], "connection.ready")
+            self.assertFalse(ready["data"]["status"]["service_loaded"])
+            self.assertEqual(ready["data"]["status"]["event_clients"], 1)
+            self.assertEqual(self.service_factory_calls, 0)
+
+            websocket.send_json({"type": "ping", "data": {"id": 7}})
+            pong = websocket.receive_json()
+            self.assertEqual(pong["type"], "connection.pong")
+            self.assertEqual(pong["data"]["echo"], {"id": 7})
+
+            websocket.send_json({"type": "status"})
+            snapshot = websocket.receive_json()
+            self.assertEqual(snapshot["type"], "status.snapshot")
+            self.assertEqual(snapshot["data"]["event_clients"], 1)
+
+    def test_websocket_receives_chat_and_listening_events(self) -> None:
+        with self.client.websocket_connect("/api/events") as websocket:
+            self.assertEqual(websocket.receive_json()["type"], "connection.ready")
+
+            response = self.client.post(
+                "/api/chat",
+                json={"message": "Hello websocket", "speak": False},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            chat_events = [websocket.receive_json() for _ in range(3)]
+            self.assertEqual(
+                [event["type"] for event in chat_events],
+                ["chat.started", "chat.reply_ready", "chat.completed"],
+            )
+            self.assertEqual(
+                chat_events[-1]["data"]["reply"],
+                "reply:Hello websocket",
+            )
+
+            started = self.client.post("/api/listening/start")
+            self.assertTrue(started.json()["changed"])
+            listening = websocket.receive_json()
+            self.assertEqual(listening["type"], "listening.changed")
+            self.assertTrue(listening["data"]["is_listening"])
+
+            conversation = self.client.post(
+                "/api/conversations",
+                json={"title": "WebSocket test"},
+            )
+            self.assertEqual(conversation.status_code, 201)
+            changed = websocket.receive_json()
+            self.assertEqual(changed["type"], "conversation.changed")
+            self.assertEqual(changed["data"]["conversation_id"], 99)
+
+        self.assertEqual(self.runtime.events.subscriber_count, 0)
 
     def test_lifespan_stops_service(self) -> None:
         self.client.get("/api/status")

@@ -9,6 +9,6 @@ scipy
 pyttsx3
 python-osc
 fastapi
-uvicorn
+uvicorn[standard]
 httpx
 httpx2>=2.0.0
