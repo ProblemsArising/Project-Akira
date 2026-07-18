@@ -1342,6 +1342,7 @@ class VMCAvatarController:
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
+        client = self.client
         try:
             self.stop_talking()
             self.stop_idle()
@@ -1353,6 +1354,19 @@ class VMCAvatarController:
             self._apply_all_blends()
         except Exception:
             pass
+        finally:
+            # python-osc's UDP client owns a socket that otherwise survives until
+            # interpreter cleanup and can trigger ResourceWarning in tests/server
+            # shutdown. Close it explicitly and make shutdown idempotent.
+            self.client = None
+            self._enabled = False
+            socket_object = getattr(client, "_sock", None)
+            close_socket = getattr(socket_object, "close", None)
+            if callable(close_socket):
+                try:
+                    close_socket()
+                except OSError:
+                    pass
 
 
 _controller = VMCAvatarController(enabled=_AVATAR_SETTINGS.enabled and _AVATAR_SETTINGS.backend == "vmc")

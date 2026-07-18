@@ -1,6 +1,6 @@
 # FastAPI backend
 
-Project Akira's HTTP backend is the foundation for the v0.2 WebUI. It keeps the
+Project Akira's HTTP and WebSocket backend is the foundation for the v0.2 WebUI. It keeps the
 existing CLI intact and exposes the reusable `ConversationService`, listening
 controls, settings, and SQLite history through local REST endpoints.
 
@@ -43,6 +43,7 @@ python server.py --reload
 | POST | `/api/listening/start` | Start microphone listening in the background |
 | POST | `/api/listening/stop` | Stop microphone listening |
 | GET | `/api/settings` | Read the current settings snapshot |
+| WS | `/api/events` | Live chat, voice, listening, and status events |
 
 Example chat request:
 
@@ -65,4 +66,4 @@ Invoke-RestMethod `
 - Calls to `ConversationService.process_text()` remain serialized by the
   service's existing lock.
 - The server shuts down the listening loop through FastAPI's lifespan handler.
-- WebSockets are intentionally not included here; they belong to issue #9.
+- WebSocket event details and browser examples are in [`websocket_events.md`](websocket_events.md).

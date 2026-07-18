@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Mapping, Protocol
 
 ConversationSource = Literal["voice", "text"]
 Recorder = Callable[[], str | None]
@@ -28,6 +28,7 @@ ResultCallback = Callable[["ConversationResult"], None]
 HistoryErrorCallback = Callable[[Exception], None]
 RecorderControl = Callable[[], None]
 ListeningStateCallback = Callable[[bool], None]
+ConversationEventCallback = Callable[[str, Mapping[str, Any]], None]
 
 
 class HistoryStore(Protocol):
@@ -83,6 +84,7 @@ class ConversationService:
         stop_recorder: RecorderControl | None = None,
         reset_recorder: RecorderControl | None = None,
         on_listening_changed: ListeningStateCallback | None = None,
+        on_event: ConversationEventCallback | None = None,
     ) -> None:
         self._recorder = recorder
         self._transcriber = transcriber
@@ -97,6 +99,9 @@ class ConversationService:
         self._stop_recorder = stop_recorder
         self._reset_recorder = reset_recorder
         self._on_listening_changed = on_listening_changed
+        self._event_callbacks: list[ConversationEventCallback] = []
+        if on_event is not None:
+            self._event_callbacks.append(on_event)
 
         self._turn_lock = threading.RLock()
         self._state_lock = threading.RLock()
@@ -211,6 +216,41 @@ class ConversationService:
             **kwargs,
         )
 
+    def add_event_listener(self, callback: ConversationEventCallback) -> None:
+        """Subscribe to structured service events.
+
+        Listeners may be called from the main thread, FastAPI worker threads,
+        or the background microphone thread. Listener failures are isolated so
+        a WebUI connection can never break the conversation pipeline.
+        """
+
+        with self._state_lock:
+            if callback not in self._event_callbacks:
+                self._event_callbacks.append(callback)
+
+    def remove_event_listener(self, callback: ConversationEventCallback) -> None:
+        with self._state_lock:
+            self._event_callbacks = [
+                item for item in self._event_callbacks if item != callback
+            ]
+
+    def _emit_event(
+        self,
+        event_type: str,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._state_lock:
+            callbacks = tuple(self._event_callbacks)
+
+        payload = dict(data or {})
+        for callback in callbacks:
+            try:
+                callback(event_type, payload)
+            except Exception:
+                # Live UI updates are optional. Never allow one failed client or
+                # event handler to interrupt recording, LLM, history, or TTS.
+                continue
+
     @property
     def current_conversation_id(self) -> int | None:
         """Database ID used by the current service session."""
@@ -228,11 +268,19 @@ class ConversationService:
             if self._history_store is None:
                 with self._state_lock:
                     self._conversation_id = None
+                self._emit_event(
+                    "conversation.changed",
+                    {"conversation_id": None, "title": title},
+                )
                 return None
 
             conversation_id = self._history_store.create_conversation(title)
             with self._state_lock:
                 self._conversation_id = conversation_id
+            self._emit_event(
+                "conversation.changed",
+                {"conversation_id": conversation_id, "title": title},
+            )
             return conversation_id
 
     @property
@@ -275,35 +323,86 @@ class ConversationService:
             return None
 
         with self._turn_lock:
-            if self._on_user_text is not None:
-                self._on_user_text(normalized_text)
-
-            reply = str(self._responder(normalized_text)).strip()
-            if not reply:
-                return None
-
-            if self._on_reply is not None:
-                self._on_reply(reply)
-
-            spoken = False
-            if speak:
-                self._speaker(reply)
-                spoken = True
-
-            result = ConversationResult(
-                user_text=normalized_text,
-                reply=reply,
-                source=source,
-                audio_file=audio_file,
-                spoken=spoken,
+            self._emit_event(
+                "chat.started",
+                {
+                    "user_text": normalized_text,
+                    "source": source,
+                    "speak": bool(speak),
+                    "audio_file": audio_file,
+                },
             )
 
-            self._save_to_history(result)
+            try:
+                if self._on_user_text is not None:
+                    self._on_user_text(normalized_text)
 
-            if self._on_result is not None:
-                self._on_result(result)
+                reply = str(self._responder(normalized_text)).strip()
+                if not reply:
+                    self._emit_event(
+                        "chat.failed",
+                        {
+                            "user_text": normalized_text,
+                            "source": source,
+                            "reason": "empty_reply",
+                        },
+                    )
+                    return None
 
-            return result
+                if self._on_reply is not None:
+                    self._on_reply(reply)
+
+                self._emit_event(
+                    "chat.reply_ready",
+                    {
+                        "user_text": normalized_text,
+                        "reply": reply,
+                        "source": source,
+                        "will_speak": bool(speak),
+                    },
+                )
+
+                spoken = False
+                if speak:
+                    self._speaker(reply)
+                    spoken = True
+
+                result = ConversationResult(
+                    user_text=normalized_text,
+                    reply=reply,
+                    source=source,
+                    audio_file=audio_file,
+                    spoken=spoken,
+                )
+
+                self._save_to_history(result)
+
+                if self._on_result is not None:
+                    self._on_result(result)
+
+                self._emit_event(
+                    "chat.completed",
+                    {
+                        "user_text": result.user_text,
+                        "reply": result.reply,
+                        "source": result.source,
+                        "audio_file": result.audio_file,
+                        "spoken": result.spoken,
+                        "conversation_id": self.current_conversation_id,
+                    },
+                )
+                return result
+            except Exception as error:
+                self._emit_event(
+                    "chat.failed",
+                    {
+                        "user_text": normalized_text,
+                        "source": source,
+                        "reason": "exception",
+                        "error": str(error),
+                    },
+                )
+                raise
 
     def _save_to_history(self, result: ConversationResult) -> None:
         if self._history_store is None:
@@ -326,6 +425,10 @@ class ConversationService:
             # A locked or damaged history database should not prevent Akira from
             # finishing a conversation turn. The WebUI can replace this callback
             # with a visible notification later.
+            self._emit_event(
+                "history.error",
+                {"error": str(error), "conversation_id": current_id},
+            )
             if self._on_history_error is not None:
                 self._on_history_error(error)
             else:
@@ -339,25 +442,57 @@ class ConversationService:
         """Record and process one microphone turn.
 
         Returns ``None`` when recording or transcription produces no usable
-        input.  This mirrors the old loop's ``continue`` behavior.
+        input. This mirrors the old loop's ``continue`` behavior.
         """
 
+        self._emit_event("voice.recording.started", {})
         audio_file = self._recorder()
         if not audio_file:
+            self._emit_event("voice.recording.cancelled", {})
             return None
+
+        normalized_audio_file = str(Path(audio_file))
+        self._emit_event(
+            "voice.recording.completed",
+            {"audio_file": normalized_audio_file},
+        )
+        self._emit_event(
+            "voice.transcription.started",
+            {"audio_file": normalized_audio_file},
+        )
 
         text = self._transcriber(audio_file)
         if not text or not text.strip():
+            self._emit_event(
+                "voice.transcription.empty",
+                {"audio_file": normalized_audio_file},
+            )
             return None
 
+        normalized_text = text.strip()
+        self._emit_event(
+            "voice.transcription.completed",
+            {
+                "audio_file": normalized_audio_file,
+                "text": normalized_text,
+            },
+        )
+
         return self.process_text(
-            text,
+            normalized_text,
             speak=True,
             source="voice",
-            audio_file=str(Path(audio_file)),
+            audio_file=normalized_audio_file,
         )
 
     def _notify_listening_changed(self, listening: bool) -> None:
+        self._emit_event(
+            "listening.changed",
+            {
+                "is_listening": bool(listening),
+                "is_running": self.is_running,
+            },
+        )
         callback = self._on_listening_changed
         if callback is not None:
             callback(listening)
