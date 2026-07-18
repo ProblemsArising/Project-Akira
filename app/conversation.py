@@ -134,10 +134,27 @@ class ConversationService:
         output_selection = resolve_audio_device(settings.audio.output_device, "output")
 
         microphone = MicrophoneRecorder(
+            output_file=settings.audio.recording_file,
             input_device=None if input_selection is None else input_selection.index,
+            sample_rate=settings.audio.sample_rate,
+            channels=settings.audio.channels,
+            frame_ms=settings.audio.frame_ms,
+            pre_roll_seconds=settings.audio.pre_roll_seconds,
+            end_silence_seconds=settings.audio.end_silence_seconds,
+            min_record_seconds=settings.audio.min_record_seconds,
+            max_record_seconds=settings.audio.max_record_seconds,
+            calibration_seconds=settings.audio.calibration_seconds,
+            start_threshold_multiplier=settings.audio.start_threshold_multiplier,
+            end_threshold_multiplier=settings.audio.end_threshold_multiplier,
+            min_start_threshold=settings.audio.min_start_threshold,
+            min_end_threshold=settings.audio.min_end_threshold,
         )
         speaker = create_speaker(
             output_device=None if output_selection is None else output_selection.index,
+            voice_index=settings.tts.voice_index,
+            rate=settings.tts.rate,
+            volume=settings.tts.volume,
+            mouth_end_delay_seconds=settings.avatar.mouth_end_delay_seconds,
         )
         cls._add_default_history(kwargs)
 
@@ -176,6 +193,10 @@ class ConversationService:
             output_selection = resolve_audio_device(settings.audio.output_device, "output")
             speaker: Speaker = create_speaker(
                 output_device=None if output_selection is None else output_selection.index,
+                voice_index=settings.tts.voice_index,
+                rate=settings.tts.rate,
+                volume=settings.tts.volume,
+                mouth_end_delay_seconds=settings.avatar.mouth_end_delay_seconds,
             )
         else:
             speaker = lambda reply: None

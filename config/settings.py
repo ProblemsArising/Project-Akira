@@ -19,6 +19,7 @@ from typing import Any, Mapping, TypeVar
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SETTINGS_FILE = PROJECT_ROOT / "data" / "settings.json"
 SETTINGS_ENV_VAR = "AKIRA_SETTINGS_FILE"
+CURRENT_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -37,8 +38,33 @@ class LLMSettings:
     model: str = "gemma4-12b-qat-uncensored-hauhaucs-balanced"
     temperature: float = 0.75
     top_p: float = 0.9
-    max_tokens: int = 180
+    max_tokens: int = 512
     max_short_term_messages: int = 20
+    stop_sequences: list[str] = field(
+        default_factory=lambda: [
+            "\nUser:",
+            "\nUSER:",
+            "\nHuman:",
+            "\nAssistant:",
+            "<|im_end|>",
+            "<|endoftext|>",
+        ]
+    )
+    retry_empty_response: bool = True
+    empty_response_retries: int = 1
+    retry_token_multiplier: float = 2.0
+    max_retry_tokens: int = 2048
+    # Reserved for LM Studio's native /api/v1/chat backend. The current
+    # OpenAI-compatible chat-completions backend leaves model reasoning on auto.
+    reasoning_mode: str = "auto"
+
+
+@dataclass
+class PersonalitySettings:
+    preset: str = "gamer"
+    # Empty means use ai/personality.py's built-in gamer prompt. The future
+    # WebUI can save a complete custom prompt here.
+    prompt: str = ""
 
 
 @dataclass
@@ -47,10 +73,12 @@ class STTSettings:
     device: str = "cuda"
     compute_type: str = "float16"
     language: str | None = None
+    beam_size: int = 5
 
 
 @dataclass
 class AudioSettings:
+    recording_file: str = "input.wav"
     input_device: int | str | None = None
     output_device: int | str | None = None
     sample_rate: int = 16000
@@ -81,12 +109,53 @@ class AvatarSettings:
     vmc_ip: str = "127.0.0.1"
     vmc_port: int = 39539
     face_blend_fps: int = 120
+    mouth_fps: int = 28
     mouth_start_delay_seconds: float = 1.15
     mouth_end_delay_seconds: float = 0.05
+    mouth_scale: float = 0.95
+    mouth_random_amount: float = 0.08
+    mouth_attack_speed: float = 0.60
+    mouth_release_speed: float = 0.42
+    reset_other_vowels_each_frame: bool = True
+    expressions_enabled: bool = True
+    idle_face_enabled: bool = True
+    idle_blinks_enabled: bool = False
+    idle_gaze_enabled: bool = False
+    idle_face_fps: int = 20
+    idle_expression_strength: float = 0.30
+    speaking_expression_strength: float = 0.72
+    expression_fade_speed: float = 0.08
+    auto_start_idle: bool = True
+    standing_pose_replay_enabled: bool = True
+    pose_fps: int = 18
+    body_idle_strength: float = 1.00
+    body_root_bob_meters: float = 0.012
+    body_sway_meters: float = 0.010
+    body_breath_degrees: float = 2.20
+    body_head_yaw_degrees: float = 2.40
+    body_arm_sway_degrees: float = 1.80
+    disable_idle_during_expressions: bool = True
+    idle_strength_during_expressions: float = 0.20
+    random_idle_expressions_enabled: bool = False
+    body_expressions_enabled: bool = True
+    body_expression_strength: float = 1.00
+    body_pose_strength: float = 1.00
+    body_expression_fade_speed: float = 0.055
+    body_speaking_motion_boost: float = 0.28
+    body_talk_pulse_degrees: float = 1.35
+    body_talk_hand_meters: float = 0.010
+    arm_gesture_strength: float = 1.00
+    arm_tracker_strength: float = 0.00
+    arm_bone_rotation_strength: float = 1.00
+    arm_speaking_sway_meters: float = 0.018
+    arm_speaking_lift_meters: float = 0.014
+    send_tracker_positions: bool = False
+    skip_eye_bones: bool = True
 
 
 @dataclass
 class MemorySettings:
+    file: str = "data/memories.json"
     max_turns: int = 300
     max_facts: int = 200
     max_context_chars: int = 2500
@@ -98,9 +167,10 @@ class MemorySettings:
 class AppSettings:
     """All user-configurable Project Akira settings."""
 
-    schema_version: int = 1
+    schema_version: int = CURRENT_SCHEMA_VERSION
     general: GeneralSettings = field(default_factory=GeneralSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
+    personality: PersonalitySettings = field(default_factory=PersonalitySettings)
     stt: STTSettings = field(default_factory=STTSettings)
     audio: AudioSettings = field(default_factory=AudioSettings)
     tts: TTSSettings = field(default_factory=TTSSettings)
@@ -148,14 +218,16 @@ def _from_dict(data: Any) -> AppSettings:
     if not isinstance(data, Mapping):
         return AppSettings()
 
-    schema_version = data.get("schema_version", 1)
+    schema_version = data.get("schema_version", CURRENT_SCHEMA_VERSION)
     if not isinstance(schema_version, int):
-        schema_version = 1
+        schema_version = CURRENT_SCHEMA_VERSION
+    schema_version = max(schema_version, CURRENT_SCHEMA_VERSION)
 
     return AppSettings(
         schema_version=schema_version,
         general=_dataclass_from_mapping(GeneralSettings, data.get("general")),
         llm=_dataclass_from_mapping(LLMSettings, data.get("llm")),
+        personality=_dataclass_from_mapping(PersonalitySettings, data.get("personality")),
         stt=_dataclass_from_mapping(STTSettings, data.get("stt")),
         audio=_dataclass_from_mapping(AudioSettings, data.get("audio")),
         tts=_dataclass_from_mapping(TTSSettings, data.get("tts")),

@@ -43,3 +43,8 @@ update_settings({
 
 Tests, portable installs, and packaged builds can set the
 `AKIRA_SETTINGS_FILE` environment variable to store the file elsewhere.
+
+
+## Runtime integration
+
+The LLM, personality, Whisper, microphone/VAD, TTS, avatar, and long-term memory now read their runtime values from this settings object. See [`runtime_settings.md`](runtime_settings.md) for all connected fields and examples.

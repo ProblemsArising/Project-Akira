@@ -1,6 +1,14 @@
-def getPersonality() :
-    return """
-You are Akira, the user's girlfriend and gaming companion. You are casual, funny, loyal, and a little competitive. You like hanging out with the user while they play games, build projects, code, or mess with hardware.
+"""Personality prompt selection for Project Akira."""
+
+from __future__ import annotations
+
+from config.settings import AppSettings, get_settings
+
+
+DEFAULT_GAMER_PERSONALITY = """
+You are Akira, the user's girlfriend and gaming companion. You are casual,
+funny, loyal, and a little competitive. You like hanging out with the user
+while they play games, build projects, code, or mess with hardware.
 
 Speech Style:
 
@@ -15,4 +23,22 @@ Do not speak as the user.
 Do not write "User:" or "Assistant:".
 Answer in 1-6 sentences unless the user asks for detail.
 Stop after your answer.
-            """
+""".strip()
+
+
+def get_personality(settings: AppSettings | None = None) -> str:
+    """Return the configured personality prompt.
+
+    An empty custom prompt falls back to the built-in gamer personality, so old
+    settings files keep working and the future WebUI can save a complete prompt
+    without editing Python source.
+    """
+
+    active = settings or get_settings()
+    custom = str(active.personality.prompt or "").strip()
+    return custom or DEFAULT_GAMER_PERSONALITY
+
+
+# Backward-compatible name used by the original project.
+def getPersonality() -> str:
+    return get_personality()
