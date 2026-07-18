@@ -54,6 +54,9 @@ def _stop_requested(stop_event: threading.Event | None) -> bool:
 
 def _record_noise_floor(
     stream: sd.InputStream,
+    *,
+    frame_size: int,
+    sample_rate: int,
     stop_event: threading.Event | None = None,
 ) -> float | None:
     """Listen briefly and estimate the room/mic noise floor.
@@ -62,13 +65,13 @@ def _record_noise_floor(
     """
 
     rms_values = []
-    frames_needed = max(1, int(CALIBRATION_SECONDS * SAMPLE_RATE / FRAME_SIZE))
+    frames_needed = max(1, int(CALIBRATION_SECONDS * sample_rate / frame_size))
 
     for _ in range(frames_needed):
         if _stop_requested(stop_event):
             return None
 
-        frame, overflowed = stream.read(FRAME_SIZE)
+        frame, overflowed = stream.read(frame_size)
         if overflowed:
             continue
         rms_values.append(_rms(frame))
@@ -86,6 +89,64 @@ def _float_to_int16(audio: np.ndarray) -> np.ndarray:
     audio = np.asarray(audio, dtype=np.float32)
     audio = np.clip(audio, -1.0, 1.0)
     return (audio * 32767).astype(np.int16)
+
+
+def _supported_input_sample_rate(
+    input_device: int | str | None,
+    *,
+    requested_rate: int = SAMPLE_RATE,
+    channels: int = CHANNELS,
+    sd_module=sd,
+) -> int:
+    """Choose a sample rate the selected microphone can actually open.
+
+    The recorder prefers Project Akira's 16 kHz rate. Some Windows WASAPI
+    endpoints only accept their native shared-mode rate, so fall back to the
+    device's advertised default when necessary.
+    """
+
+    requested_rate = max(1, int(requested_rate))
+
+    try:
+        sd_module.check_input_settings(
+            device=input_device,
+            channels=channels,
+            samplerate=requested_rate,
+            dtype="float32",
+        )
+        return requested_rate
+    except Exception as requested_error:
+        try:
+            info = sd_module.query_devices(input_device, kind="input")
+            fallback_rate = int(round(float(info.get("default_samplerate", 0))))
+        except Exception as query_error:
+            raise RuntimeError(
+                f"Could not inspect microphone {input_device!r}: {query_error}"
+            ) from requested_error
+
+        if fallback_rate <= 0 or fallback_rate == requested_rate:
+            raise RuntimeError(
+                f"Microphone {input_device!r} does not support {requested_rate} Hz."
+            ) from requested_error
+
+        try:
+            sd_module.check_input_settings(
+                device=input_device,
+                channels=channels,
+                samplerate=fallback_rate,
+                dtype="float32",
+            )
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Microphone {input_device!r} supports neither {requested_rate} Hz "
+                f"nor its advertised default of {fallback_rate} Hz."
+            ) from fallback_error
+
+        print(
+            f"ℹ️ Microphone does not support {requested_rate} Hz through this "
+            f"audio API; using {fallback_rate} Hz instead."
+        )
+        return fallback_rate
 
 
 def record_audio(
@@ -106,7 +167,12 @@ def record_audio(
 
     print("\n🎤 Listening... start talking when ready. Press Ctrl+C to stop.")
 
-    pre_roll_frames = max(1, int(PRE_ROLL_SECONDS * SAMPLE_RATE / FRAME_SIZE))
+    stream_sample_rate = _supported_input_sample_rate(input_device)
+    frame_size = max(1, int(stream_sample_rate * FRAME_MS / 1000))
+    pre_roll_frames = max(
+        1,
+        int(PRE_ROLL_SECONDS * stream_sample_rate / frame_size),
+    )
     pre_roll = deque(maxlen=pre_roll_frames)
 
     recorded_frames = []
@@ -116,12 +182,17 @@ def record_audio(
 
     with sd.InputStream(
         device=input_device,
-        samplerate=SAMPLE_RATE,
+        samplerate=stream_sample_rate,
         channels=CHANNELS,
         dtype="float32",
-        blocksize=FRAME_SIZE,
+        blocksize=frame_size,
     ) as stream:
-        noise_floor = _record_noise_floor(stream, stop_event)
+        noise_floor = _record_noise_floor(
+            stream,
+            frame_size=frame_size,
+            sample_rate=stream_sample_rate,
+            stop_event=stop_event,
+        )
         if noise_floor is None:
             print("⏹️ Listening stopped.")
             return None
@@ -139,7 +210,7 @@ def record_audio(
                 print("⏹️ Listening stopped.")
                 return None
 
-            frame, overflowed = stream.read(FRAME_SIZE)
+            frame, overflowed = stream.read(frame_size)
             if overflowed:
                 print("⚠️ Mic buffer overflowed; continuing...")
 
@@ -189,11 +260,11 @@ def record_audio(
 
     audio = np.concatenate(recorded_frames, axis=0)
 
-    if len(audio) < int(MIN_RECORD_SECONDS * SAMPLE_RATE):
+    if len(audio) < int(MIN_RECORD_SECONDS * stream_sample_rate):
         print("🤫 Speech was too short; skipping.")
         return None
 
-    wav.write(output_file, SAMPLE_RATE, _float_to_int16(audio))
+    wav.write(output_file, stream_sample_rate, _float_to_int16(audio))
     print(f"✅ Saved audio: {output_file}")
     return output_file
 
