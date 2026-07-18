@@ -86,17 +86,18 @@ Start assistant.py
   
 
 ## Base Project completed as v0
+## Application Foundation completed as v0.1
   
 ## Development Roadmap
 
 ### v0.1 — Application Foundation
 
-- [ ] Central settings system
-- [ ] Reusable conversation service
-- [ ] SQLite chat history
-- [ ] Text-message support
-- [ ] Start/stop listening controls
-- [ ] Audio-device selection
+- [x] Central settings system
+- [x] Reusable conversation service
+- [x] SQLite chat history
+- [x] Text-message support
+- [x] Start/stop listening controls
+- [x] Audio-device selection
 
 ### v0.2 — WebUI
 
