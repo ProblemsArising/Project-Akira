@@ -11,6 +11,19 @@ IF Needed, make api key and put it llm.py
 run the project assistant.py  
 
 
+
+### Configuration
+
+Project Akira creates `data/settings.json` automatically. LLM, personality,
+Whisper, microphone/VAD, TTS, avatar, and memory values can be changed there
+without editing Python source.
+
+```powershell
+python -m config.settings
+```
+
+See [`docs/runtime_settings.md`](docs/runtime_settings.md) for examples.
+
 ### Text chat
 
 Use interactive typed chat instead of microphone input:

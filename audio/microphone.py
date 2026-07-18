@@ -57,6 +57,7 @@ def _record_noise_floor(
     *,
     frame_size: int,
     sample_rate: int,
+    calibration_seconds: float = CALIBRATION_SECONDS,
     stop_event: threading.Event | None = None,
 ) -> float | None:
     """Listen briefly and estimate the room/mic noise floor.
@@ -65,7 +66,7 @@ def _record_noise_floor(
     """
 
     rms_values = []
-    frames_needed = max(1, int(CALIBRATION_SECONDS * sample_rate / frame_size))
+    frames_needed = max(1, int(calibration_seconds * sample_rate / frame_size))
 
     for _ in range(frames_needed):
         if _stop_requested(stop_event):
@@ -154,6 +155,18 @@ def record_audio(
     *,
     stop_event: threading.Event | None = None,
     input_device: int | str | None = None,
+    sample_rate: int = SAMPLE_RATE,
+    channels: int = CHANNELS,
+    frame_ms: int = FRAME_MS,
+    pre_roll_seconds: float = PRE_ROLL_SECONDS,
+    end_silence_seconds: float = END_SILENCE_SECONDS,
+    min_record_seconds: float = MIN_RECORD_SECONDS,
+    max_record_seconds: float = MAX_RECORD_SECONDS,
+    calibration_seconds: float = CALIBRATION_SECONDS,
+    start_threshold_multiplier: float = START_THRESHOLD_MULTIPLIER,
+    end_threshold_multiplier: float = END_THRESHOLD_MULTIPLIER,
+    min_start_threshold: float = MIN_START_THRESHOLD,
+    min_end_threshold: float = MIN_END_THRESHOLD,
 ) -> str | None:
     """Record from the microphone until speech ends or recording is cancelled.
 
@@ -167,11 +180,13 @@ def record_audio(
 
     print("\n🎤 Listening... start talking when ready. Press Ctrl+C to stop.")
 
-    stream_sample_rate = _supported_input_sample_rate(input_device)
-    frame_size = max(1, int(stream_sample_rate * FRAME_MS / 1000))
+    stream_sample_rate = _supported_input_sample_rate(
+        input_device, requested_rate=sample_rate, channels=channels
+    )
+    frame_size = max(1, int(stream_sample_rate * frame_ms / 1000))
     pre_roll_frames = max(
         1,
-        int(PRE_ROLL_SECONDS * stream_sample_rate / frame_size),
+        int(pre_roll_seconds * stream_sample_rate / frame_size),
     )
     pre_roll = deque(maxlen=pre_roll_frames)
 
@@ -183,7 +198,7 @@ def record_audio(
     with sd.InputStream(
         device=input_device,
         samplerate=stream_sample_rate,
-        channels=CHANNELS,
+        channels=channels,
         dtype="float32",
         blocksize=frame_size,
     ) as stream:
@@ -191,14 +206,15 @@ def record_audio(
             stream,
             frame_size=frame_size,
             sample_rate=stream_sample_rate,
+            calibration_seconds=calibration_seconds,
             stop_event=stop_event,
         )
         if noise_floor is None:
             print("⏹️ Listening stopped.")
             return None
 
-        start_threshold = max(noise_floor * START_THRESHOLD_MULTIPLIER, MIN_START_THRESHOLD)
-        end_threshold = max(noise_floor * END_THRESHOLD_MULTIPLIER, MIN_END_THRESHOLD)
+        start_threshold = max(noise_floor * start_threshold_multiplier, min_start_threshold)
+        end_threshold = max(noise_floor * end_threshold_multiplier, min_end_threshold)
 
         print(
             f"✅ Calibrated noise floor: {noise_floor:.4f} "
@@ -241,12 +257,12 @@ def record_audio(
             silence_duration = now - last_speech_time
 
             if (
-                recording_duration >= MIN_RECORD_SECONDS
-                and silence_duration >= END_SILENCE_SECONDS
+                recording_duration >= min_record_seconds
+                and silence_duration >= end_silence_seconds
             ):
                 break
 
-            if recording_duration >= MAX_RECORD_SECONDS:
+            if recording_duration >= max_record_seconds:
                 print("⏱️ Max recording length reached; saving what was captured.")
                 break
 
@@ -260,7 +276,7 @@ def record_audio(
 
     audio = np.concatenate(recorded_frames, axis=0)
 
-    if len(audio) < int(MIN_RECORD_SECONDS * stream_sample_rate):
+    if len(audio) < int(min_record_seconds * stream_sample_rate):
         print("🤫 Speech was too short; skipping.")
         return None
 
@@ -281,9 +297,33 @@ class MicrophoneRecorder:
         output_file: str = AUDIO_FILE,
         *,
         input_device: int | str | None = None,
+        sample_rate: int = SAMPLE_RATE,
+        channels: int = CHANNELS,
+        frame_ms: int = FRAME_MS,
+        pre_roll_seconds: float = PRE_ROLL_SECONDS,
+        end_silence_seconds: float = END_SILENCE_SECONDS,
+        min_record_seconds: float = MIN_RECORD_SECONDS,
+        max_record_seconds: float = MAX_RECORD_SECONDS,
+        calibration_seconds: float = CALIBRATION_SECONDS,
+        start_threshold_multiplier: float = START_THRESHOLD_MULTIPLIER,
+        end_threshold_multiplier: float = END_THRESHOLD_MULTIPLIER,
+        min_start_threshold: float = MIN_START_THRESHOLD,
+        min_end_threshold: float = MIN_END_THRESHOLD,
     ) -> None:
         self.output_file = output_file
         self.input_device = input_device
+        self.sample_rate = int(sample_rate)
+        self.channels = int(channels)
+        self.frame_ms = int(frame_ms)
+        self.pre_roll_seconds = float(pre_roll_seconds)
+        self.end_silence_seconds = float(end_silence_seconds)
+        self.min_record_seconds = float(min_record_seconds)
+        self.max_record_seconds = float(max_record_seconds)
+        self.calibration_seconds = float(calibration_seconds)
+        self.start_threshold_multiplier = float(start_threshold_multiplier)
+        self.end_threshold_multiplier = float(end_threshold_multiplier)
+        self.min_start_threshold = float(min_start_threshold)
+        self.min_end_threshold = float(min_end_threshold)
         self._stop_event = threading.Event()
 
     @property
@@ -295,6 +335,18 @@ class MicrophoneRecorder:
             self.output_file,
             stop_event=self._stop_event,
             input_device=self.input_device,
+            sample_rate=self.sample_rate,
+            channels=self.channels,
+            frame_ms=self.frame_ms,
+            pre_roll_seconds=self.pre_roll_seconds,
+            end_silence_seconds=self.end_silence_seconds,
+            min_record_seconds=self.min_record_seconds,
+            max_record_seconds=self.max_record_seconds,
+            calibration_seconds=self.calibration_seconds,
+            start_threshold_multiplier=self.start_threshold_multiplier,
+            end_threshold_multiplier=self.end_threshold_multiplier,
+            min_start_threshold=self.min_start_threshold,
+            min_end_threshold=self.min_end_threshold,
         )
 
     def set_input_device(self, input_device: int | str | None) -> None:

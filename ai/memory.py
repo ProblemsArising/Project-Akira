@@ -6,14 +6,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Project root is AIWaifu/, because this file is AIWaifu/ai/memory.py
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-MEMORY_FILE = DATA_DIR / "memories.json"
+from config.settings import PROJECT_ROOT, get_settings
 
-MAX_TURNS = 300
-MAX_FACTS = 200
-MAX_MEMORY_CHARS = 2500
+DEFAULT_MEMORY_FILE = PROJECT_ROOT / "data" / "memories.json"
+# Backward-compatible name for external scripts. Runtime operations use the
+# configured path returned by ``_memory_file``.
+MEMORY_FILE = DEFAULT_MEMORY_FILE
+
+
+def _memory_file() -> Path:
+    configured = Path(str(get_settings().memory.file)).expanduser()
+    if not configured.is_absolute():
+        configured = PROJECT_ROOT / configured
+    return configured.resolve()
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "if", "then", "than", "to", "of", "in",
@@ -22,6 +27,11 @@ STOPWORDS = {
     "those", "do", "does", "did", "so", "just", "like", "what", "when", "where", "why",
     "how", "can", "could", "would", "should", "will", "about", "last", "thing", "said",
 }
+
+
+def _trim_to_limit(items: list[Any], limit: int) -> list[Any]:
+    limit = max(0, int(limit))
+    return items[-limit:] if limit else []
 
 
 def _now() -> str:
@@ -36,21 +46,22 @@ def _blank_memory() -> dict[str, Any]:
 
 
 def load_memory() -> dict[str, Any]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    memory_file = _memory_file()
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if not MEMORY_FILE.exists():
+    if not memory_file.exists():
         memory = _blank_memory()
         save_memory(memory)
         return memory
 
     try:
-        with MEMORY_FILE.open("r", encoding="utf-8") as f:
+        with memory_file.open("r", encoding="utf-8") as f:
             memory = json.load(f)
     except (json.JSONDecodeError, OSError):
         # If the file gets corrupted, keep a backup instead of destroying it.
-        backup = MEMORY_FILE.with_suffix(f".broken-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
+        backup = memory_file.with_suffix(f".broken-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
         try:
-            MEMORY_FILE.rename(backup)
+            memory_file.rename(backup)
             print(f"⚠️ Memory file was corrupted. Backed it up to: {backup}")
         except OSError:
             pass
@@ -63,8 +74,9 @@ def load_memory() -> dict[str, Any]:
 
 
 def save_memory(memory: dict[str, Any]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with MEMORY_FILE.open("w", encoding="utf-8") as f:
+    memory_file = _memory_file()
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
+    with memory_file.open("w", encoding="utf-8") as f:
         json.dump(memory, f, indent=2, ensure_ascii=False)
 
 
@@ -111,7 +123,7 @@ def add_fact(text: str, source: str = "manual") -> None:
             "times_seen": 1,
         })
 
-    memory["facts"] = memory["facts"][-MAX_FACTS:]
+    memory["facts"] = _trim_to_limit(memory["facts"], get_settings().memory.max_facts)
     save_memory(memory)
 
 
@@ -176,7 +188,7 @@ def remember_turn(user_text: str, assistant_text: str) -> None:
         "user": user_text,
         "assistant": assistant_text,
     })
-    memory["turns"] = memory["turns"][-MAX_TURNS:]
+    memory["turns"] = _trim_to_limit(memory["turns"], get_settings().memory.max_turns)
 
     for fact_text in _extract_fact_candidates(user_text):
         if not _dedupe_fact(memory, fact_text):
@@ -188,12 +200,19 @@ def remember_turn(user_text: str, assistant_text: str) -> None:
                 "times_seen": 1,
             })
 
-    memory["facts"] = memory["facts"][-MAX_FACTS:]
+    memory["facts"] = _trim_to_limit(memory["facts"], get_settings().memory.max_facts)
     save_memory(memory)
 
 
-def build_memory_context(user_text: str, recent_turns: int = 6, relevant_limit: int = 6) -> str:
+def build_memory_context(
+    user_text: str,
+    recent_turns: int | None = None,
+    relevant_limit: int | None = None,
+) -> str:
     """Return a compact memory block to inject into the LLM prompt."""
+    settings = get_settings().memory
+    recent_turns = max(0, int(settings.recent_turns if recent_turns is None else recent_turns))
+    relevant_limit = max(0, int(settings.relevant_limit if relevant_limit is None else relevant_limit))
     memory = load_memory()
     facts = memory.get("facts", [])
     turns = memory.get("turns", [])
@@ -237,8 +256,11 @@ def build_memory_context(user_text: str, recent_turns: int = 6, relevant_limit: 
                 lines.append(f"  Akira: {turn.get('assistant', '')[:220]}")
 
     context = "\n".join(lines).strip()
-    if len(context) > MAX_MEMORY_CHARS:
-        context = context[-MAX_MEMORY_CHARS:]
+    max_chars = max(0, int(settings.max_context_chars))
+    if max_chars and len(context) > max_chars:
+        context = context[-max_chars:]
+    elif max_chars == 0:
+        context = ""
 
     return context
 

@@ -140,11 +140,13 @@ class MicrophoneDeviceTests(unittest.TestCase):
             result = recorder.record()
 
         self.assertEqual(result, "input.wav")
-        record.assert_called_once_with(
-            "input.wav",
-            stop_event=mock.ANY,
-            input_device=7,
-        )
+        record.assert_called_once()
+        args, kwargs = record.call_args
+        self.assertEqual(args, ("input.wav",))
+        self.assertEqual(kwargs["input_device"], 7)
+        self.assertEqual(kwargs["sample_rate"], 16000)
+        self.assertEqual(kwargs["frame_ms"], 30)
+        self.assertIsNotNone(kwargs["stop_event"])
 
 
 class TTSOutputDeviceTests(unittest.TestCase):

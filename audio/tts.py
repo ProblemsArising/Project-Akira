@@ -137,11 +137,13 @@ class TextToSpeech:
         voice_index: int = 1,
         rate: int = 175,
         volume: float = 1.0,
+        mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
     ) -> None:
         self.output_device = output_device
         self.voice_index = voice_index
         self.rate = rate
         self.volume = volume
+        self.mouth_end_delay_seconds = max(0.0, float(mouth_end_delay_seconds))
 
     def __call__(self, text: str) -> None:
         self.speak(text)
@@ -170,7 +172,7 @@ class TextToSpeech:
             start_talking(text)
             engine.say(text)
             engine.runAndWait()
-            time.sleep(MOUTH_END_DELAY_SECONDS)
+            time.sleep(self.mouth_end_delay_seconds)
         finally:
             stop_talking()
 
@@ -196,7 +198,7 @@ class TextToSpeech:
                     device=self.output_device,
                     blocking=True,
                 )
-                time.sleep(MOUTH_END_DELAY_SECONDS)
+                time.sleep(self.mouth_end_delay_seconds)
             finally:
                 stop_talking()
         finally:
@@ -209,6 +211,7 @@ def create_speaker(
     voice_index: int = 1,
     rate: int = 175,
     volume: float = 1.0,
+    mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
 ) -> TextToSpeech:
     """Create a configured speaker callable for ``ConversationService``."""
 
@@ -217,9 +220,21 @@ def create_speaker(
         voice_index=voice_index,
         rate=rate,
         volume=volume,
+        mouth_end_delay_seconds=mouth_end_delay_seconds,
     )
 
 
 # Backward-compatible function used by older code and external scripts.
 def tts(text: str) -> None:
-    TextToSpeech().speak(text)
+    from audio.devices import resolve_audio_device
+    from config.settings import get_settings
+
+    settings = get_settings()
+    output = resolve_audio_device(settings.audio.output_device, "output")
+    create_speaker(
+        output_device=None if output is None else output.index,
+        voice_index=settings.tts.voice_index,
+        rate=settings.tts.rate,
+        volume=settings.tts.volume,
+        mouth_end_delay_seconds=settings.avatar.mouth_end_delay_seconds,
+    ).speak(text)

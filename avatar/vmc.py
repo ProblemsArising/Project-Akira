@@ -31,6 +31,8 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from config.settings import get_settings
+
 try:
     from pythonosc.udp_client import SimpleUDPClient
 except ImportError:  # Keep the assistant usable even if python-osc is missing.
@@ -52,8 +54,10 @@ except ImportError:
     )
 
 
-VSEEFACE_IP = "127.0.0.1"
-VSEEFACE_PORT = 39539
+_AVATAR_SETTINGS = get_settings().avatar
+
+VSEEFACE_IP = _AVATAR_SETTINGS.vmc_ip
+VSEEFACE_PORT = int(_AVATAR_SETTINGS.vmc_port)
 
 # ---------------------------------------------------------------------------
 # Mouth settings -- these match the values you said worked well.
@@ -62,115 +66,115 @@ VSEEFACE_PORT = 39539
 VOWEL_BLENDS = ("A", "I", "U", "E", "O")
 EXPRESSION_BLENDS = ("Joy", "Fun", "Sorrow", "Angry", "Surprised")
 
-MOUTH_FPS = 28
+MOUTH_FPS = max(1, int(_AVATAR_SETTINGS.mouth_fps))
 
 # pyttsx3 -> VB Cable -> RVCC can add latency.
 # Increase if the mouth moves before you hear the changed voice.
-MOUTH_START_DELAY_SECONDS = 1.15
+MOUTH_START_DELAY_SECONDS = max(0.0, float(_AVATAR_SETTINGS.mouth_start_delay_seconds))
 
 # Overall scale for mouth movement. Lower this if the mouth opens too wide.
-MOUTH_SCALE = 0.95
+MOUTH_SCALE = max(0.0, float(_AVATAR_SETTINGS.mouth_scale))
 
 # Small random variation to avoid looking identical every syllable.
-RANDOM_AMOUNT = 0.08
+RANDOM_AMOUNT = max(0.0, float(_AVATAR_SETTINGS.mouth_random_amount))
 
 # Mouth uses the V5.0/V5.1 behavior because that was the stable version on this model.
 # It allows the small secondary vowel values from VISEME_SHAPES, but resets all
 # vowel blends before each frame so they do not stack inside VSeeFace.
-RESET_OTHER_VOWELS_EACH_FRAME = True
+RESET_OTHER_VOWELS_EACH_FRAME = bool(_AVATAR_SETTINGS.reset_other_vowels_each_frame)
 
 # How snappy mouth changes are.
 # Higher attack = opens faster. Lower release = closes softer.
-ATTACK_SPEED = 0.60
-RELEASE_SPEED = 0.42
+ATTACK_SPEED = max(0.0, min(1.0, float(_AVATAR_SETTINGS.mouth_attack_speed)))
+RELEASE_SPEED = max(0.0, min(1.0, float(_AVATAR_SETTINGS.mouth_release_speed)))
 
 # ---------------------------------------------------------------------------
 # Expression settings
 # ---------------------------------------------------------------------------
 
-ENABLE_EXPRESSIONS = True
-ENABLE_IDLE_FACE = True
-IDLE_FACE_FPS = 20
+ENABLE_EXPRESSIONS = bool(_AVATAR_SETTINGS.expressions_enabled)
+ENABLE_IDLE_FACE = bool(_AVATAR_SETTINGS.idle_face_enabled)
+IDLE_FACE_FPS = max(1, int(_AVATAR_SETTINGS.idle_face_fps))
 
 # V5.5: one coordinated blend/apply loop owns ALL face blendshapes.
 # This avoids tiny hiccups caused by mouth and expression threads both calling /Blend/Apply.
-FACE_BLEND_FPS = 120
+FACE_BLEND_FPS = max(1, int(_AVATAR_SETTINGS.face_blend_fps))
 
 # Keep values modest. VRM expressions can get intense fast.
-IDLE_EXPRESSION_STRENGTH = 0.30
-SPEAKING_EXPRESSION_STRENGTH = 0.72
-EXPRESSION_FADE_SPEED = 0.08
+IDLE_EXPRESSION_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.idle_expression_strength))
+SPEAKING_EXPRESSION_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.speaking_expression_strength))
+EXPRESSION_FADE_SPEED = max(0.0, min(1.0, float(_AVATAR_SETTINGS.expression_fade_speed)))
 
 # Leave these OFF for now. They were the most likely cause of the eye glitching.
-ENABLE_IDLE_BLINKS = False
-ENABLE_IDLE_GAZE = False
+ENABLE_IDLE_BLINKS = bool(_AVATAR_SETTINGS.idle_blinks_enabled)
+ENABLE_IDLE_GAZE = bool(_AVATAR_SETTINGS.idle_gaze_enabled)
 
 # ---------------------------------------------------------------------------
 # Body / pose settings
 # ---------------------------------------------------------------------------
 
-AUTO_START_IDLE = True
-ENABLE_STANDING_POSE_REPLAY = True
-POSE_FPS = 18
+AUTO_START_IDLE = bool(_AVATAR_SETTINGS.auto_start_idle)
+ENABLE_STANDING_POSE_REPLAY = bool(_AVATAR_SETTINGS.standing_pose_replay_enabled)
+POSE_FPS = max(1, int(_AVATAR_SETTINGS.pose_fps))
 
 # 1.0 is intentionally more visible than the previous 0.20.
 # Lower to 0.50 if the body looks too busy. Set to 0.0 to disable motion.
-BODY_IDLE_STRENGTH = 1.00
+BODY_IDLE_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.body_idle_strength))
 
 # Visible-but-safe idle movement on top of the captured standing pose.
-BODY_ROOT_BOB_METERS = 0.012
-BODY_SWAY_METERS = 0.010
-BODY_BREATH_DEGREES = 2.20
-BODY_HEAD_YAW_DEGREES = 2.40
-BODY_ARM_SWAY_DEGREES = 1.80
+BODY_ROOT_BOB_METERS = float(_AVATAR_SETTINGS.body_root_bob_meters)
+BODY_SWAY_METERS = float(_AVATAR_SETTINGS.body_sway_meters)
+BODY_BREATH_DEGREES = float(_AVATAR_SETTINGS.body_breath_degrees)
+BODY_HEAD_YAW_DEGREES = float(_AVATAR_SETTINGS.body_head_yaw_degrees)
+BODY_ARM_SWAY_DEGREES = float(_AVATAR_SETTINGS.body_arm_sway_degrees)
 
 # V6.2: while a speaking expression pose is active, reduce idle breathing/sway.
 # Hard-freezing idle looked rhythmic, so this uses a tiny amount of motion instead of 0.
-DISABLE_IDLE_DURING_EXPRESSIONS = True
-IDLE_STRENGTH_DURING_EXPRESSIONS = 0.2
+DISABLE_IDLE_DURING_EXPRESSIONS = bool(_AVATAR_SETTINGS.disable_idle_during_expressions)
+IDLE_STRENGTH_DURING_EXPRESSIONS = max(0.0, min(1.0, float(_AVATAR_SETTINGS.idle_strength_during_expressions)))
 
 # Random idle expressions caused rhythmic body freezes in V6.1. Keep the body idle
 # continuous unless Akira is actually reacting to a spoken reply.
-ENABLE_RANDOM_IDLE_EXPRESSIONS = False
+ENABLE_RANDOM_IDLE_EXPRESSIONS = bool(_AVATAR_SETTINGS.random_idle_expressions_enabled)
 
 # ---------------------------------------------------------------------------
 # V6.2 body pose / calibrated arm gesture settings
 # ---------------------------------------------------------------------------
 
-ENABLE_BODY_EXPRESSIONS = True
+ENABLE_BODY_EXPRESSIONS = bool(_AVATAR_SETTINGS.body_expressions_enabled)
 
 # Overall body-expression strength. This layers on top of BODY_IDLE_STRENGTH.
 # Lower to 0.60 if gestures feel too dramatic, raise to 1.25 if too subtle.
-BODY_EXPRESSION_STRENGTH = 1.00
+BODY_EXPRESSION_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.body_expression_strength))
 
 # Makes the pose offsets more/less dramatic without changing idle breathing.
-BODY_POSE_STRENGTH = 1.00
+BODY_POSE_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.body_pose_strength))
 
 # How fast posture/emotion changes ease in/out.
-BODY_EXPRESSION_FADE_SPEED = 0.055
+BODY_EXPRESSION_FADE_SPEED = max(0.0, min(1.0, float(_AVATAR_SETTINGS.body_expression_fade_speed)))
 
 # Extra movement while she is actively speaking.
-BODY_SPEAKING_MOTION_BOOST = 0.28
+BODY_SPEAKING_MOTION_BOOST = max(0.0, float(_AVATAR_SETTINGS.body_speaking_motion_boost))
 
 # Speaking motion is a little more visible than pure idle.
-BODY_TALK_PULSE_DEGREES = 1.35
-BODY_TALK_HAND_METERS = 0.010
+BODY_TALK_PULSE_DEGREES = float(_AVATAR_SETTINGS.body_talk_pulse_degrees)
+BODY_TALK_HAND_METERS = float(_AVATAR_SETTINGS.body_talk_hand_meters)
 
 # V6.2 arm gesture tuning.
 # Arms are driven by bone rotations only. Hand trackers are disabled because calibration showed VSeeFace ignores them.
 # If arms are too dramatic, lower ARM_GESTURE_STRENGTH first.
-ARM_GESTURE_STRENGTH = 1.00
-ARM_TRACKER_STRENGTH = 0.00
-ARM_BONE_ROTATION_STRENGTH = 1.00
-ARM_SPEAKING_SWAY_METERS = 0.018
-ARM_SPEAKING_LIFT_METERS = 0.014
+ARM_GESTURE_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.arm_gesture_strength))
+ARM_TRACKER_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.arm_tracker_strength))
+ARM_BONE_ROTATION_STRENGTH = max(0.0, float(_AVATAR_SETTINGS.arm_bone_rotation_strength))
+ARM_SPEAKING_SWAY_METERS = float(_AVATAR_SETTINGS.arm_speaking_sway_meters)
+ARM_SPEAKING_LIFT_METERS = float(_AVATAR_SETTINGS.arm_speaking_lift_meters)
 
 # If exact bone replay does not move the body in VSeeFace, try setting this True.
 # Some receiver setups respond better to the VMC tracker positions too.
-SEND_TRACKER_POSITIONS = False
+SEND_TRACKER_POSITIONS = bool(_AVATAR_SETTINGS.send_tracker_positions)
 
 # Do not send eye bones for now. This avoids eye fighting/glitching.
-SKIP_BONES = {"LeftEye", "RightEye"}
+SKIP_BONES = {"LeftEye", "RightEye"} if _AVATAR_SETTINGS.skip_eye_bones else set()
 
 
 Vec3 = Tuple[float, float, float]
@@ -613,11 +617,17 @@ def _rough_text_to_visemes(text: str) -> List[VisemeEvent]:
 
 
 class VMCAvatarController:
-    def __init__(self, ip: str = VSEEFACE_IP, port: int = VSEEFACE_PORT):
+    def __init__(
+        self,
+        ip: str = VSEEFACE_IP,
+        port: int = VSEEFACE_PORT,
+        *,
+        enabled: bool = True,
+    ):
         self.ip = ip
         self.port = port
         self.client = None
-        self._enabled = SimpleUDPClient is not None
+        self._enabled = bool(enabled) and SimpleUDPClient is not None
 
         self._send_lock = threading.Lock()
         self._state_lock = threading.RLock()
@@ -644,7 +654,7 @@ class VMCAvatarController:
 
         if self._enabled:
             self.client = SimpleUDPClient(self.ip, self.port)
-        else:
+        elif enabled:
             print("⚠️ python-osc is not installed. VMC avatar control is disabled.")
             print("   Install it with: pip install python-osc")
 
@@ -1345,7 +1355,7 @@ class VMCAvatarController:
             pass
 
 
-_controller = VMCAvatarController()
+_controller = VMCAvatarController(enabled=_AVATAR_SETTINGS.enabled and _AVATAR_SETTINGS.backend == "vmc")
 atexit.register(_controller.shutdown)
 
 
