@@ -26,6 +26,8 @@ Speaker = Callable[[str], None]
 MessageCallback = Callable[[str], None]
 ResultCallback = Callable[["ConversationResult"], None]
 HistoryErrorCallback = Callable[[Exception], None]
+RecorderControl = Callable[[], None]
+ListeningStateCallback = Callable[[bool], None]
 
 
 class HistoryStore(Protocol):
@@ -78,6 +80,9 @@ class ConversationService:
         history_store: HistoryStore | None = None,
         conversation_id: int | None = None,
         on_history_error: HistoryErrorCallback | None = None,
+        stop_recorder: RecorderControl | None = None,
+        reset_recorder: RecorderControl | None = None,
+        on_listening_changed: ListeningStateCallback | None = None,
     ) -> None:
         self._recorder = recorder
         self._transcriber = transcriber
@@ -89,11 +94,16 @@ class ConversationService:
         self._history_store = history_store
         self._conversation_id = conversation_id
         self._on_history_error = on_history_error
+        self._stop_recorder = stop_recorder
+        self._reset_recorder = reset_recorder
+        self._on_listening_changed = on_listening_changed
 
         self._turn_lock = threading.RLock()
         self._state_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._running = False
+        self._listening_active = False
+        self._listener_thread: threading.Thread | None = None
 
     @staticmethod
     def _add_default_history(kwargs: dict[str, object]) -> None:
@@ -113,17 +123,20 @@ class ConversationService:
         """
 
         from ai.llm import ask_ai
-        from audio.microphone import record_audio
+        from audio.microphone import MicrophoneRecorder
         from audio.tts import tts
         from audio.whisper_stt import transcribe
 
+        microphone = MicrophoneRecorder()
         cls._add_default_history(kwargs)
 
         return cls(
-            recorder=record_audio,
+            recorder=microphone.record,
             transcriber=transcribe,
             responder=ask_ai,
             speaker=tts,
+            stop_recorder=microphone.request_stop,
+            reset_recorder=microphone.reset,
             **kwargs,
         )
 
@@ -186,10 +199,17 @@ class ConversationService:
 
     @property
     def is_running(self) -> bool:
-        """Whether ``run_voice_loop`` is currently active."""
+        """Whether the microphone worker loop is still running."""
 
         with self._state_lock:
             return self._running
+
+    @property
+    def is_listening(self) -> bool:
+        """Whether new microphone input is currently being accepted."""
+
+        with self._state_lock:
+            return self._listening_active
 
     @property
     def stop_requested(self) -> bool:
@@ -299,28 +319,133 @@ class ConversationService:
             audio_file=str(Path(audio_file)),
         )
 
-    def run_voice_loop(self) -> None:
-        """Continuously process microphone turns until ``request_stop``.
+    def _notify_listening_changed(self, listening: bool) -> None:
+        callback = self._on_listening_changed
+        if callback is not None:
+            callback(listening)
 
-        ``record_audio`` is currently blocking, so a stop request takes effect
-        after the active recording call returns.  Issue #5 can add an
-        interruptible recorder when start/stop listening controls are built.
-        """
-
+    def _claim_listening(self, thread: threading.Thread | None) -> bool:
         with self._state_lock:
             if self._running:
-                raise RuntimeError("ConversationService is already running")
+                return False
             self._running = True
+            self._listening_active = True
+            self._listener_thread = thread
             self._stop_event.clear()
 
+        try:
+            if self._reset_recorder is not None:
+                self._reset_recorder()
+        except Exception:
+            with self._state_lock:
+                self._running = False
+                self._listening_active = False
+                self._listener_thread = None
+            raise
+
+        self._notify_listening_changed(True)
+        return True
+
+    def _finish_listening(self) -> None:
+        with self._state_lock:
+            should_notify = self._listening_active
+            self._running = False
+            self._listening_active = False
+            self._listener_thread = None
+        if should_notify:
+            self._notify_listening_changed(False)
+
+    def _run_claimed_voice_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
                 self.process_voice_once()
         finally:
-            with self._state_lock:
-                self._running = False
+            self._finish_listening()
 
-    def request_stop(self) -> None:
-        """Ask the active voice loop to stop at its next safe opportunity."""
+    def run_voice_loop(self) -> None:
+        """Run the microphone loop in the current thread until stopped."""
+
+        if not self._claim_listening(None):
+            raise RuntimeError("ConversationService is already listening")
+        self._run_claimed_voice_loop()
+
+    def start_listening(self) -> bool:
+        """Start microphone listening in a background thread.
+
+        Returns ``True`` when a new loop starts and ``False`` if listening was
+        already active. This is the method a future WebUI Start button should
+        call.
+        """
+
+        thread = threading.Thread(
+            target=self._run_claimed_voice_loop,
+            name="ProjectAkiraListening",
+            daemon=True,
+        )
+
+        if not self._claim_listening(thread):
+            return False
+
+        try:
+            thread.start()
+        except Exception:
+            self._finish_listening()
+            raise
+        return True
+
+    def stop_listening(
+        self,
+        *,
+        wait: bool = False,
+        timeout: float | None = None,
+    ) -> bool:
+        """Stop accepting microphone input.
+
+        The interruptible production recorder exits within roughly one audio
+        frame. Set ``wait=True`` when a caller needs the background loop fully
+        stopped before continuing. Returns whether listening had been active.
+        """
+
+        with self._state_lock:
+            was_listening = self._listening_active
+            self._listening_active = False
+            thread = self._listener_thread
 
         self._stop_event.set()
+        if was_listening:
+            self._notify_listening_changed(False)
+        if self._stop_recorder is not None:
+            try:
+                self._stop_recorder()
+            except Exception as error:
+                print(f"⚠️ Could not interrupt microphone recording: {error}")
+
+        if (
+            wait
+            and thread is not None
+            and thread is not threading.current_thread()
+            and thread.ident is not None
+        ):
+            thread.join(timeout=timeout)
+
+        return was_listening
+
+    def wait_until_stopped(self, timeout: float | None = None) -> bool:
+        """Wait for a background listening loop to finish."""
+
+        with self._state_lock:
+            thread = self._listener_thread
+
+        if (
+            thread is not None
+            and thread is not threading.current_thread()
+            and thread.ident is not None
+        ):
+            thread.join(timeout=timeout)
+
+        return not self.is_running
+
+    def request_stop(self) -> None:
+        """Backward-compatible alias for non-blocking ``stop_listening``."""
+
+        self.stop_listening(wait=False)

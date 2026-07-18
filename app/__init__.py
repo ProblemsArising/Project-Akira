@@ -2,6 +2,7 @@
 
 from .conversation import ConversationResult, ConversationService
 from .history import ChatHistoryStore, ConversationSummary, HistoryTurn
+from .listening_controls import ListeningControlSession
 
 __all__ = [
     "ChatHistoryStore",
@@ -9,4 +10,5 @@ __all__ = [
     "ConversationService",
     "ConversationSummary",
     "HistoryTurn",
+    "ListeningControlSession",
 ]

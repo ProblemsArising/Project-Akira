@@ -239,5 +239,119 @@ class ConversationServiceTests(unittest.TestCase):
 
 
 
+    def test_start_and_stop_background_listening_interrupts_recorder(self):
+        entered = threading.Event()
+        recorder_stop = threading.Event()
+        states = []
+        reset_calls = []
+
+        def recorder():
+            entered.set()
+            recorder_stop.wait(timeout=2)
+            return None
+
+        def reset_recorder():
+            reset_calls.append(True)
+            recorder_stop.clear()
+
+        service, _ = self.make_service(
+            recorder=recorder,
+            stop_recorder=recorder_stop.set,
+            reset_recorder=reset_recorder,
+            on_listening_changed=states.append,
+        )
+
+        self.assertTrue(service.start_listening())
+        self.assertTrue(entered.wait(timeout=1))
+        self.assertTrue(service.is_listening)
+        self.assertTrue(service.stop_listening(wait=True, timeout=2))
+
+        self.assertFalse(service.is_listening)
+        self.assertEqual(reset_calls, [True])
+        self.assertEqual(states, [True, False])
+
+    def test_start_listening_returns_false_when_already_active(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def recorder():
+            entered.set()
+            release.wait(timeout=2)
+            return None
+
+        service, _ = self.make_service(
+            recorder=recorder,
+            stop_recorder=release.set,
+        )
+
+        self.assertTrue(service.start_listening())
+        self.assertTrue(entered.wait(timeout=1))
+        self.assertFalse(service.start_listening())
+        service.stop_listening(wait=True, timeout=2)
+
+    def test_background_listening_can_restart_after_stop(self):
+        entered_count = 0
+        entered = threading.Event()
+        recorder_stop = threading.Event()
+        reset_count = 0
+
+        def recorder():
+            nonlocal entered_count
+            entered_count += 1
+            entered.set()
+            recorder_stop.wait(timeout=2)
+            return None
+
+        def reset_recorder():
+            nonlocal reset_count
+            reset_count += 1
+            recorder_stop.clear()
+
+        service, _ = self.make_service(
+            recorder=recorder,
+            stop_recorder=recorder_stop.set,
+            reset_recorder=reset_recorder,
+        )
+
+        self.assertTrue(service.start_listening())
+        self.assertTrue(entered.wait(timeout=1))
+        service.stop_listening(wait=True, timeout=2)
+
+        entered.clear()
+        self.assertTrue(service.start_listening())
+        self.assertTrue(entered.wait(timeout=1))
+        service.stop_listening(wait=True, timeout=2)
+
+        self.assertGreaterEqual(entered_count, 2)
+        self.assertEqual(reset_count, 2)
+
+    def test_request_stop_interrupts_active_recorder(self):
+        entered = threading.Event()
+        recorder_stop = threading.Event()
+
+        def recorder():
+            entered.set()
+            recorder_stop.wait(timeout=2)
+            return None
+
+        service, _ = self.make_service(
+            recorder=recorder,
+            stop_recorder=recorder_stop.set,
+        )
+
+        service.start_listening()
+        self.assertTrue(entered.wait(timeout=1))
+        service.request_stop()
+        self.assertTrue(recorder_stop.is_set())
+        self.assertTrue(service.wait_until_stopped(timeout=2))
+
+    def test_stop_listening_returns_false_when_already_stopped(self):
+        service, _ = self.make_service()
+
+        self.assertFalse(service.stop_listening())
+        self.assertFalse(service.is_listening)
+
+
+
 if __name__ == "__main__":
     unittest.main()

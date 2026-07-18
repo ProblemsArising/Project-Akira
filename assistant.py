@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Sequence
 
 from app.conversation import ConversationService
+from app.listening_controls import ListeningControlSession
 from app.text_input import TextInputSession
 
 
@@ -13,15 +14,21 @@ def build_parser() -> argparse.ArgumentParser:
     """Create the Project Akira command-line argument parser."""
 
     parser = argparse.ArgumentParser(description="Project Akira local AI companion")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--text",
         action="store_true",
         help="Open interactive text chat instead of continuous microphone input.",
     )
-    parser.add_argument(
+    mode.add_argument(
         "--message",
         metavar="TEXT",
         help="Send one typed message and exit.",
+    )
+    mode.add_argument(
+        "--controls",
+        action="store_true",
+        help="Open terminal start/stop microphone controls.",
     )
     parser.add_argument(
         "--no-speak",
@@ -64,6 +71,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 speak=not arguments.no_speak,
             )
             session.run()
+            return 0
+
+        if arguments.controls:
+            ListeningControlSession(service=service).run()
             return 0
 
         service.run_voice_loop()
