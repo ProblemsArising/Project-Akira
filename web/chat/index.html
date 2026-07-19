@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Project Akira</title>
+  <link rel="stylesheet" href="/static/chat/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h1>Project Akira</h1>
+          <p>Local AI companion</p>
+        </div>
+      </div>
+
+      <div class="status-area" aria-live="polite">
+        <span id="connectionBadge" class="status-badge offline">
+          <span class="status-dot"></span>
+          <span id="connectionText">Connecting</span>
+        </span>
+        <span id="activityBadge" class="activity-badge">Ready</span>
+      </div>
+    </header>
+
+    <main class="chat-layout">
+      <section class="chat-panel" aria-label="Conversation">
+        <div class="chat-toolbar">
+          <div>
+            <h2 id="conversationTitle">Current conversation</h2>
+            <p id="conversationMeta">Messages stay on this computer.</p>
+          </div>
+
+          <div class="toolbar-actions">
+            <label class="speak-toggle">
+              <input id="speakToggle" type="checkbox" checked>
+              <span class="toggle-track" aria-hidden="true">
+                <span class="toggle-thumb"></span>
+              </span>
+              <span>Speak replies</span>
+            </label>
+
+            <button id="newConversationButton" class="secondary-button" type="button">
+              New chat
+            </button>
+          </div>
+        </div>
+
+        <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions">
+          <div id="welcomeCard" class="welcome-card">
+            <div class="welcome-icon" aria-hidden="true">A</div>
+            <h2>Talk with Akira</h2>
+            <p>
+              Send a message below, or start microphone listening.
+              Replies, voice state, and transcriptions appear here live.
+            </p>
+          </div>
+        </div>
+
+        <div id="errorBanner" class="error-banner" role="alert" hidden>
+          <span id="errorText"></span>
+          <button id="dismissErrorButton" type="button" aria-label="Dismiss error">×</button>
+        </div>
+
+        <form id="composer" class="composer">
+          <button
+            id="listenButton"
+            class="listen-button"
+            type="button"
+            aria-label="Start microphone listening"
+            title="Start microphone listening"
+          >
+            <span class="mic-icon" aria-hidden="true"></span>
+            <span id="listenButtonText">Listen</span>
+          </button>
+
+          <div class="input-wrap">
+            <textarea
+              id="messageInput"
+              rows="1"
+              maxlength="50000"
+              placeholder="Message Akira..."
+              aria-label="Message Akira"
+            ></textarea>
+            <span id="inputHint" class="input-hint">Enter to send · Shift+Enter for a new line</span>
+          </div>
+
+          <button id="sendButton" class="send-button" type="submit">
+            <span>Send</span>
+            <span class="send-arrow" aria-hidden="true">↑</span>
+          </button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <template id="messageTemplate">
+    <article class="message">
+      <div class="message-avatar" aria-hidden="true"></div>
+      <div class="message-content">
+        <div class="message-header">
+          <span class="message-author"></span>
+          <span class="message-source"></span>
+        </div>
+        <div class="message-bubble"></div>
+      </div>
+    </article>
+  </template>
+
+  <script src="/static/chat/app.js" defer></script>
+</body>
+</html>

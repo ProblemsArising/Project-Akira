@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from typing import Any, AsyncIterator, Callable, Mapping, Protocol
@@ -25,12 +26,18 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
 from config.settings import get_settings
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
 
 
 class ConversationServiceLike(Protocol):
@@ -335,6 +342,23 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         ),
         lifespan=lifespan,
     )
+
+    application.mount(
+        "/static/chat",
+        StaticFiles(directory=CHAT_WEB_ROOT),
+        name="chat-static",
+    )
+
+    @application.get("/", include_in_schema=False)
+    @application.get("/chat", include_in_schema=False)
+    def chat_page() -> FileResponse:
+        """Serve the local Project Akira chat interface."""
+
+        return FileResponse(
+            CHAT_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @application.get("/api/health", response_model=HealthResponse, tags=["system"])
     def health() -> HealthResponse:
