@@ -54,9 +54,8 @@ class LLMSettings:
     empty_response_retries: int = 1
     retry_token_multiplier: float = 2.0
     max_retry_tokens: int = 2048
-    # Preferred reasoning setting. LM Studio's native API can enforce this;
-    # the current OpenAI-compatible backend keeps it in configuration until
-    # the backend selector/native LM Studio path is added.
+    # LM Studio reasoning setting. Any value other than "auto" uses the
+    # native /api/v1/chat endpoint so the preference is actually enforced.
     reasoning_mode: str = "off"
 
 

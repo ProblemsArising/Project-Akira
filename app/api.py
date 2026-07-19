@@ -34,6 +34,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
+from app.personalities import (
+    PersonalityPreset,
+    PersonalityStore,
+    PersonalityStoreError,
+    get_personality_store,
+)
 from config.settings import get_settings, reset_settings, update_settings
 from config.settings_validation import SettingsValidationError, validate_settings_changes
 
@@ -42,6 +48,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
 SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
 HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
+PERSONALITIES_WEB_ROOT = PROJECT_ROOT / "web" / "personalities"
 
 
 class ConversationServiceLike(Protocol):
@@ -85,6 +92,7 @@ class ConversationServiceLike(Protocol):
 
 ServiceFactory = Callable[[], ConversationServiceLike]
 HistoryFactory = Callable[[], ChatHistoryStore]
+PersonalityFactory = Callable[[], PersonalityStore]
 
 
 class BackendRuntime:
@@ -95,12 +103,15 @@ class BackendRuntime:
         *,
         service_factory: ServiceFactory | None = None,
         history_factory: HistoryFactory = get_history_store,
+        personality_factory: PersonalityFactory = get_personality_store,
         event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
         self._history_factory = history_factory
+        self._personality_factory = personality_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
+        self._personalities: PersonalityStore | None = None
         self._events = event_hub or EventHub()
         self._lock = threading.RLock()
 
@@ -119,6 +130,13 @@ class BackendRuntime:
             if self._history is None:
                 self._history = self._history_factory()
             return self._history
+
+    @property
+    def personalities(self) -> PersonalityStore:
+        with self._lock:
+            if self._personalities is None:
+                self._personalities = self._personality_factory()
+            return self._personalities
 
     def _publish_service_event(
         self,
@@ -276,6 +294,80 @@ class SettingsMutationResponse(StrictModel):
     changed_sections: list[str]
     restart_required: bool
 
+class PersonalityPresetResponse(StrictModel):
+    id: str
+    name: str
+    description: str
+    prompt: str
+    built_in: bool
+    created_at: str
+    updated_at: str
+
+
+class PersonalityListResponse(StrictModel):
+    active_id: str
+    legacy_prompt_override: bool
+    presets: list[PersonalityPresetResponse]
+
+
+class CreatePersonalityRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+    prompt: str = Field(min_length=20, max_length=20_000)
+    activate: bool = False
+
+
+class UpdatePersonalityRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=300)
+    prompt: str | None = Field(default=None, min_length=20, max_length=20_000)
+
+
+class DuplicatePersonalityRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    activate: bool = False
+
+
+class PersonalityMutationResponse(StrictModel):
+    preset: PersonalityPresetResponse
+    active_id: str
+    applied_live: bool
+
+
+def _preset_response(preset: PersonalityPreset) -> PersonalityPresetResponse:
+    return PersonalityPresetResponse(**preset.to_dict())
+
+
+def _refresh_personality_prompt(prompt: str) -> bool:
+    # Import lazily so the personality page never initializes the LLM stack.
+    from ai.llm import refresh_personality_prompt
+
+    return refresh_personality_prompt(prompt)
+
+
+def _activate_personality(
+    preset: PersonalityPreset,
+    runtime: BackendRuntime,
+) -> tuple[str, bool]:
+    updated = update_settings(
+        {
+            "personality": {
+                "preset": preset.id,
+                "prompt": "",
+            }
+        }
+    )
+    applied_live = _refresh_personality_prompt(preset.prompt)
+    runtime.events.publish(
+        "personality.changed",
+        {
+            "preset_id": preset.id,
+            "name": preset.name,
+            "applied_live": applied_live,
+        },
+    )
+    return updated.personality.preset, applied_live
+
 
 def _get_runtime(request: Request) -> BackendRuntime:
     return request.app.state.runtime
@@ -399,6 +491,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=HISTORY_WEB_ROOT),
         name="history-static",
     )
+    application.mount(
+        "/static/personalities",
+        StaticFiles(directory=PERSONALITIES_WEB_ROOT),
+        name="personalities-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -427,6 +524,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             HISTORY_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/personalities", include_in_schema=False)
+    def personalities_page() -> FileResponse:
+        """Serve the local Project Akira personality editor."""
+
+        return FileResponse(
+            PERSONALITIES_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
@@ -704,6 +811,188 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
             is_listening=service.is_listening,
             is_running=service.is_running,
         )
+
+    @application.get(
+        "/api/personalities",
+        response_model=PersonalityListResponse,
+        tags=["personalities"],
+    )
+    def list_personalities(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> PersonalityListResponse:
+        settings = get_settings()
+        return PersonalityListResponse(
+            active_id=settings.personality.preset or "gamer",
+            legacy_prompt_override=bool(str(settings.personality.prompt or "").strip()),
+            presets=[
+                _preset_response(preset)
+                for preset in active_runtime.personalities.list_presets()
+            ],
+        )
+
+    @application.post(
+        "/api/personalities",
+        response_model=PersonalityMutationResponse,
+        tags=["personalities"],
+        status_code=201,
+    )
+    def create_personality(
+        payload: CreatePersonalityRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> PersonalityMutationResponse:
+        try:
+            preset = active_runtime.personalities.create_preset(
+                name=payload.name,
+                description=payload.description,
+                prompt=payload.prompt,
+            )
+        except PersonalityStoreError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        active_id = get_settings().personality.preset or "gamer"
+        applied_live = False
+        if payload.activate:
+            active_id, applied_live = _activate_personality(preset, active_runtime)
+        active_runtime.events.publish(
+            "personality.created",
+            {"preset_id": preset.id, "name": preset.name},
+        )
+        return PersonalityMutationResponse(
+            preset=_preset_response(preset),
+            active_id=active_id,
+            applied_live=applied_live,
+        )
+
+    @application.patch(
+        "/api/personalities/{preset_id}",
+        response_model=PersonalityMutationResponse,
+        tags=["personalities"],
+    )
+    def update_personality(
+        preset_id: str,
+        payload: UpdatePersonalityRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> PersonalityMutationResponse:
+        try:
+            preset = active_runtime.personalities.update_preset(
+                preset_id,
+                name=payload.name,
+                description=payload.description,
+                prompt=payload.prompt,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Personality not found.") from error
+        except PersonalityStoreError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+        settings = get_settings()
+        active_id = settings.personality.preset or "gamer"
+        applied_live = False
+        if active_id == preset.id and not str(settings.personality.prompt or "").strip():
+            applied_live = _refresh_personality_prompt(preset.prompt)
+            active_runtime.events.publish(
+                "personality.changed",
+                {
+                    "preset_id": preset.id,
+                    "name": preset.name,
+                    "applied_live": applied_live,
+                    "edited": True,
+                },
+            )
+        active_runtime.events.publish(
+            "personality.updated",
+            {"preset_id": preset.id, "name": preset.name},
+        )
+        return PersonalityMutationResponse(
+            preset=_preset_response(preset),
+            active_id=active_id,
+            applied_live=applied_live,
+        )
+
+    @application.post(
+        "/api/personalities/{preset_id}/duplicate",
+        response_model=PersonalityMutationResponse,
+        tags=["personalities"],
+        status_code=201,
+    )
+    def duplicate_personality(
+        preset_id: str,
+        payload: DuplicatePersonalityRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> PersonalityMutationResponse:
+        try:
+            preset = active_runtime.personalities.duplicate_preset(
+                preset_id,
+                name=payload.name,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Personality not found.") from error
+        except PersonalityStoreError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        active_id = get_settings().personality.preset or "gamer"
+        applied_live = False
+        if payload.activate:
+            active_id, applied_live = _activate_personality(preset, active_runtime)
+        active_runtime.events.publish(
+            "personality.created",
+            {
+                "preset_id": preset.id,
+                "name": preset.name,
+                "duplicated_from": preset_id,
+            },
+        )
+        return PersonalityMutationResponse(
+            preset=_preset_response(preset),
+            active_id=active_id,
+            applied_live=applied_live,
+        )
+
+    @application.post(
+        "/api/personalities/{preset_id}/activate",
+        response_model=PersonalityMutationResponse,
+        tags=["personalities"],
+    )
+    def activate_personality(
+        preset_id: str,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> PersonalityMutationResponse:
+        preset = active_runtime.personalities.get_preset(preset_id)
+        if preset is None:
+            raise HTTPException(status_code=404, detail="Personality not found.")
+        active_id, applied_live = _activate_personality(preset, active_runtime)
+        return PersonalityMutationResponse(
+            preset=_preset_response(preset),
+            active_id=active_id,
+            applied_live=applied_live,
+        )
+
+    @application.delete(
+        "/api/personalities/{preset_id}",
+        status_code=204,
+        tags=["personalities"],
+    )
+    def delete_personality(
+        preset_id: str,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> Response:
+        active_id = get_settings().personality.preset or "gamer"
+        if preset_id == active_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Activate another personality before deleting this one.",
+            )
+        try:
+            active_runtime.personalities.delete_preset(preset_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Personality not found.") from error
+        except PersonalityStoreError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "personality.deleted",
+            {"preset_id": preset_id},
+        )
+        return Response(status_code=204)
 
     @application.get(
         "/api/settings",

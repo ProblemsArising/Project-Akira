@@ -4,7 +4,7 @@
   const SECTION_META = {
     general: { label: "General", description: "Desktop behavior and window preferences." },
     llm: { label: "AI model", description: "Connection and generation behavior for the language model." },
-    personality: { label: "Personality", description: "Current personality preset and custom prompt." },
+    personality: { label: "Personality", description: "Legacy overrides. Use the Personality editor for presets." },
     stt: { label: "Speech recognition", description: "Whisper model, device, language, and decoding options." },
     audio: { label: "Microphone", description: "Recording, VAD sensitivity, and speech timing." },
     tts: { label: "Voice", description: "System TTS voice, speed, and volume." },
@@ -19,18 +19,18 @@
     "general.remember_window_positions": { label: "Remember window positions" },
 
     "llm.backend": { label: "Backend", advanced: true },
-    "llm.base_url": { label: "Server URL", description: "OpenAI-compatible local server address.", fullWidth: true },
+    "llm.base_url": { label: "Server URL", description: "LM Studio server address. Project Akira derives the native API endpoint automatically.", fullWidth: true },
     "llm.api_key": { label: "API key", inputType: "password", advanced: true },
     "llm.model": { label: "Model name", description: "Must match the model identifier exposed by the server.", fullWidth: true },
     "llm.temperature": { label: "Temperature", description: "Higher values make replies more varied.", min: 0, max: 2, step: 0.05 },
     "llm.top_p": { label: "Top P", min: 0, max: 1, step: 0.05 },
     "llm.max_tokens": { label: "Maximum output tokens", description: "Includes hidden reasoning tokens for compatible models.", min: 1, max: 32768, step: 1 },
     "llm.max_short_term_messages": { label: "Short-term messages", min: 1, max: 500, step: 1 },
-    "llm.reasoning_mode": { label: "Reasoning mode", description: "Saved now; native backend enforcement arrives later.", options: ["off", "auto", "low", "medium", "high", "on"] },
+    "llm.reasoning_mode": { label: "Reasoning mode", description: "Enforced through LM Studio native chat. Auto uses the OpenAI-compatible endpoint.", options: ["off", "auto", "low", "medium", "high", "on"] },
     "llm.stop_sequences": { label: "Stop sequences", description: "One sequence per line.", fullWidth: true, advanced: true },
 
-    "personality.preset": { label: "Preset", description: "The dedicated personality editor arrives in a later checkpoint." },
-    "personality.prompt": { label: "Custom system prompt", description: "Leave empty to use the built-in prompt.", fullWidth: true, multiline: true },
+    "personality.preset": { label: "Active preset ID", description: "Managed from the Personality editor.", advanced: true },
+    "personality.prompt": { label: "Legacy prompt override", description: "Overrides the selected preset. Clear this field to use the Personality editor.", fullWidth: true, multiline: true, advanced: true },
 
     "stt.model": { label: "Whisper model", description: "Larger models are more accurate but use more memory." },
     "stt.device": { label: "Device", options: ["cuda", "cpu", "auto"] },

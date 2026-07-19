@@ -118,6 +118,83 @@ class RuntimeSettingsTests(unittest.TestCase):
 
         self.assertEqual(len(llm.messages), 1)
 
+    def test_lm_studio_native_backend_enforces_reasoning_off(self) -> None:
+        from ai.llm import LocalLLM
+
+        class NativeResponse:
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "output": [
+                        {"type": "message", "content": "Immediate reply"}
+                    ],
+                    "stats": {
+                        "total_output_tokens": 12,
+                        "reasoning_output_tokens": 0,
+                    },
+                }
+
+        native_client = mock.Mock()
+        native_client.post.return_value = NativeResponse()
+
+        settings = AppSettings()
+        settings.llm.backend = "lm_studio"
+        settings.llm.base_url = "http://localhost:1234/v1"
+        settings.llm.reasoning_mode = "off"
+        settings.llm.max_tokens = 1024
+
+        with mock.patch("ai.llm.build_memory_context", return_value=""), mock.patch(
+            "ai.llm.remember_turn"
+        ):
+            reply = LocalLLM(
+                settings,
+                native_client=native_client,
+            ).ask("Hello")
+
+        self.assertEqual(reply, "Immediate reply")
+        call = native_client.post.call_args
+        self.assertEqual(call.args[0], "http://localhost:1234/api/v1/chat")
+        self.assertEqual(call.kwargs["json"]["reasoning"], "off")
+        self.assertEqual(call.kwargs["json"]["max_output_tokens"], 1024)
+        self.assertFalse(call.kwargs["json"]["store"])
+        self.assertIn("Hello", call.kwargs["json"]["input"])
+
+    def test_auto_reasoning_keeps_openai_compatible_backend(self) -> None:
+        from ai.llm import LocalLLM
+
+        response = types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(
+                        content="Compatible reply",
+                        reasoning_content=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ]
+        )
+        create = mock.Mock(return_value=response)
+        client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=create)
+            )
+        )
+
+        settings = AppSettings()
+        settings.llm.reasoning_mode = "auto"
+
+        with mock.patch("ai.llm.build_memory_context", return_value=""), mock.patch(
+            "ai.llm.remember_turn"
+        ):
+            reply = LocalLLM(settings, client=client).ask("Hello")
+
+        self.assertEqual(reply, "Compatible reply")
+        create.assert_called_once()
+
     def test_whisper_model_and_transcription_options_come_from_settings(self) -> None:
         from audio.whisper_stt import WhisperTranscriber
 
