@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "general": {
     "launch_on_startup": false,
     "open_avatar_window": true,
@@ -13,7 +13,7 @@
     "model": "gemma4-12b-qat-uncensored-hauhaucs-balanced",
     "temperature": 0.75,
     "top_p": 0.9,
-    "max_tokens": 512,
+    "max_tokens": 1024,
     "max_short_term_messages": 20,
     "stop_sequences": [
       "\nUser:",
@@ -27,7 +27,7 @@
     "empty_response_retries": 1,
     "retry_token_multiplier": 2.0,
     "max_retry_tokens": 2048,
-    "reasoning_mode": "auto"
+    "reasoning_mode": "off"
   },
   "personality": {
     "preset": "gamer",

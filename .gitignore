@@ -7,6 +7,8 @@ venv/
 # Runtime-generated Project Akira data
 data/settings.json
 data/settings.broken-*.json
+data/personalities.json
+data/personalities.broken-*.json
 input.wav
 
 # Editors and logs
