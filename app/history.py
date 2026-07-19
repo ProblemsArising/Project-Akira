@@ -240,14 +240,71 @@ class ChatHistoryStore:
         *,
         limit: int = 50,
         offset: int = 0,
+        query: str | None = None,
     ) -> list[ConversationSummary]:
-        """Return recent conversations newest-first."""
+        """Return recent conversations newest-first.
+
+        When ``query`` is provided, titles and complete user/Akira turn text are
+        searched case-insensitively. Results stay grouped by conversation so the
+        WebUI can show one concise history card per chat.
+        """
 
         safe_limit = max(1, min(int(limit), 500))
         safe_offset = max(0, int(offset))
+        normalized_query = str(query or "").strip()
 
+        where = ""
+        parameters: list[object] = []
+        if normalized_query:
+            pattern = f"%{normalized_query}%"
+            where = """
+                WHERE c.title LIKE ? COLLATE NOCASE
+                   OR EXISTS (
+                       SELECT 1
+                       FROM turns AS searched_turn
+                       WHERE searched_turn.conversation_id = c.id
+                         AND (
+                             searched_turn.user_text LIKE ? COLLATE NOCASE
+                             OR searched_turn.assistant_text LIKE ? COLLATE NOCASE
+                         )
+                   )
+            """
+            parameters.extend((pattern, pattern, pattern))
+
+        parameters.extend((safe_limit, safe_offset))
         with self._lock, self._connection() as connection:
             rows = connection.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.title,
+                    c.created_at,
+                    c.updated_at,
+                    COUNT(t.id) AS turn_count,
+                    COALESCE((
+                        SELECT t2.assistant_text
+                        FROM turns AS t2
+                        WHERE t2.conversation_id = c.id
+                        ORDER BY t2.id DESC
+                        LIMIT 1
+                    ), '') AS last_message
+                FROM conversations AS c
+                LEFT JOIN turns AS t ON t.conversation_id = c.id
+                {where}
+                GROUP BY c.id
+                ORDER BY c.updated_at DESC, c.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                parameters,
+            ).fetchall()
+
+        return [self._summary_from_row(row) for row in rows]
+
+    def get_conversation(self, conversation_id: int) -> ConversationSummary | None:
+        """Return one conversation summary, or ``None`` when it does not exist."""
+
+        with self._lock, self._connection() as connection:
+            row = connection.execute(
                 """
                 SELECT
                     c.id,
@@ -264,24 +321,13 @@ class ChatHistoryStore:
                     ), '') AS last_message
                 FROM conversations AS c
                 LEFT JOIN turns AS t ON t.conversation_id = c.id
+                WHERE c.id = ?
                 GROUP BY c.id
-                ORDER BY c.updated_at DESC, c.id DESC
-                LIMIT ? OFFSET ?
                 """,
-                (safe_limit, safe_offset),
-            ).fetchall()
+                (int(conversation_id),),
+            ).fetchone()
 
-        return [
-            ConversationSummary(
-                id=int(row["id"]),
-                title=str(row["title"]),
-                created_at=str(row["created_at"]),
-                updated_at=str(row["updated_at"]),
-                turn_count=int(row["turn_count"]),
-                last_message=str(row["last_message"]),
-            )
-            for row in rows
-        ]
+        return None if row is None else self._summary_from_row(row)
 
     def get_turns(
         self,
@@ -387,6 +433,17 @@ class ChatHistoryStore:
                 "SELECT COUNT(*) AS count FROM conversations"
             ).fetchone()
         return int(row["count"])
+
+    @staticmethod
+    def _summary_from_row(row: sqlite3.Row) -> ConversationSummary:
+        return ConversationSummary(
+            id=int(row["id"]),
+            title=str(row["title"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            turn_count=int(row["turn_count"]),
+            last_message=str(row["last_message"]),
+        )
 
     @staticmethod
     def _turn_from_row(row: sqlite3.Row) -> HistoryTurn:

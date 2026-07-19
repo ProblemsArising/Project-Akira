@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>History · Project Akira</title>
+  <link rel="stylesheet" href="/static/history/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h1>Project Akira</h1>
+          <p>Local AI companion</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <nav class="topnav" aria-label="Primary navigation">
+          <a href="/">Chat</a>
+          <a class="active" href="/history">History</a>
+          <a href="/settings">Settings</a>
+        </nav>
+        <span id="connectionBadge" class="connection-badge offline">
+          <span class="connection-dot"></span>
+          <span id="connectionText">Connecting</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="history-layout">
+      <aside class="conversation-panel" aria-label="Saved conversations">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Saved locally</p>
+            <h2>Conversation history</h2>
+          </div>
+          <button id="newChatButton" class="icon-button accent" type="button" title="Start new chat" aria-label="Start new chat">+</button>
+        </div>
+
+        <label class="search-box">
+          <span class="search-icon" aria-hidden="true"></span>
+          <input id="searchInput" type="search" placeholder="Search conversations..." autocomplete="off">
+          <button id="clearSearchButton" type="button" aria-label="Clear search" hidden>×</button>
+        </label>
+
+        <div id="listStatus" class="list-status">Loading conversations…</div>
+        <div id="conversationList" class="conversation-list" role="listbox" aria-label="Conversation list"></div>
+      </aside>
+
+      <section class="transcript-panel" aria-label="Conversation transcript">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon" aria-hidden="true">A</div>
+          <h2>Select a conversation</h2>
+          <p>Choose a saved chat to read its full transcript, rename it, or delete it.</p>
+        </div>
+
+        <div id="conversationView" class="conversation-view" hidden>
+          <header class="transcript-header">
+            <div class="title-area">
+              <div class="title-line">
+                <h2 id="conversationTitle"></h2>
+                <span id="activeBadge" class="active-badge" hidden>Active</span>
+              </div>
+              <p id="conversationDetails"></p>
+            </div>
+            <div class="transcript-actions">
+              <button id="continueButton" class="button primary" type="button">Continue chat</button>
+              <button id="renameButton" class="button secondary" type="button">Rename</button>
+              <button id="deleteButton" class="button danger" type="button">Delete</button>
+            </div>
+          </header>
+
+          <div id="transcript" class="transcript" role="log"></div>
+        </div>
+
+        <div id="errorBanner" class="error-banner" role="alert" hidden>
+          <span id="errorText"></span>
+          <button id="dismissErrorButton" type="button" aria-label="Dismiss error">×</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="conversationCardTemplate">
+    <button class="conversation-card" type="button" role="option">
+      <span class="card-topline">
+        <strong class="card-title"></strong>
+        <time class="card-time"></time>
+      </span>
+      <span class="card-preview"></span>
+      <span class="card-bottom">
+        <span class="card-meta"></span>
+        <span class="card-open">View transcript →</span>
+      </span>
+    </button>
+  </template>
+
+  <template id="turnTemplate">
+    <article class="turn">
+      <div class="turn-message user-message">
+        <div class="message-avatar" aria-hidden="true">Y</div>
+        <div class="message-content">
+          <div class="message-header"><strong>You</strong><span class="message-source"></span><time></time></div>
+          <div class="message-bubble user-bubble"></div>
+        </div>
+      </div>
+      <div class="turn-message assistant-message">
+        <div class="message-avatar akira" aria-hidden="true">A</div>
+        <div class="message-content">
+          <div class="message-header"><strong>Akira</strong><span class="spoken-state"></span></div>
+          <div class="message-bubble assistant-bubble"></div>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <dialog id="renameDialog" class="modal">
+    <form id="renameForm" method="dialog">
+      <div class="modal-heading">
+        <h2>Rename conversation</h2>
+        <button class="modal-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <label>
+        <span>Conversation title</span>
+        <input id="renameInput" maxlength="200" required>
+      </label>
+      <div class="modal-actions">
+        <button class="button secondary" value="cancel">Cancel</button>
+        <button id="confirmRenameButton" class="button primary" type="submit">Save title</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="deleteDialog" class="modal">
+    <form id="deleteForm" method="dialog">
+      <div class="modal-heading">
+        <h2>Delete conversation?</h2>
+        <button class="modal-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <p>This permanently removes the selected transcript from this computer. Long-term memories are stored separately and are not deleted.</p>
+      <div class="modal-actions">
+        <button class="button secondary" value="cancel">Cancel</button>
+        <button id="confirmDeleteButton" class="button danger solid" type="submit">Delete permanently</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/history/app.js" defer></script>
+</body>
+</html>

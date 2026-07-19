@@ -22,6 +22,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -40,6 +41,7 @@ from config.settings_validation import SettingsValidationError, validate_setting
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
 SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
+HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
 
 
 class ConversationServiceLike(Protocol):
@@ -64,6 +66,10 @@ class ConversationServiceLike(Protocol):
     ) -> ConversationResult | None: ...
 
     def start_new_conversation(self, title: str | None = None) -> int | None: ...
+
+    def detach_conversation(self, conversation_id: int | None = None) -> bool: ...
+
+    def activate_conversation(self, conversation_id: int) -> int: ...
 
     def start_listening(self) -> bool: ...
 
@@ -144,6 +150,19 @@ class BackendRuntime:
                     add_listener(self._publish_service_event)
             return self._service
 
+    def detach_deleted_conversation(self, conversation_id: int) -> bool:
+        """Detach a deleted active conversation without loading heavy services."""
+
+        with self._lock:
+            service = self._service
+        if service is None or service.current_conversation_id != int(conversation_id):
+            return False
+
+        detach = getattr(service, "detach_conversation", None)
+        if not callable(detach):
+            return False
+        return bool(detach(conversation_id))
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             service = self._service
@@ -206,6 +225,16 @@ class NewConversationRequest(StrictModel):
 
 class NewConversationResponse(StrictModel):
     conversation_id: int | None
+
+
+class RenameConversationRequest(StrictModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class ActivateConversationResponse(StrictModel):
+    conversation_id: int
+    title: str
+    restored_turns: int
 
 
 class ListeningResponse(StrictModel):
@@ -365,6 +394,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=SETTINGS_WEB_ROOT),
         name="settings-static",
     )
+    application.mount(
+        "/static/history",
+        StaticFiles(directory=HISTORY_WEB_ROOT),
+        name="history-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -383,6 +417,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             SETTINGS_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/history", include_in_schema=False)
+    def history_page() -> FileResponse:
+        """Serve the local Project Akira conversation-history interface."""
+
+        return FileResponse(
+            HISTORY_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
@@ -497,16 +541,115 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     def list_conversations(
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
+        query: str | None = Query(default=None, max_length=500),
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> list[ConversationSummaryResponse]:
         try:
             conversations = active_runtime.history.list_conversations(
                 limit=limit,
                 offset=offset,
+                query=query,
             )
         except Exception as error:
             raise _service_error(error) from error
         return [ConversationSummaryResponse(**asdict(item)) for item in conversations]
+
+    @application.get(
+        "/api/conversations/{conversation_id}/summary",
+        response_model=ConversationSummaryResponse,
+        tags=["history"],
+    )
+    def conversation_summary(
+        conversation_id: int,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ConversationSummaryResponse:
+        try:
+            summary = active_runtime.history.get_conversation(conversation_id)
+        except Exception as error:
+            raise _service_error(error) from error
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        return ConversationSummaryResponse(**asdict(summary))
+
+    @application.post(
+        "/api/conversations/{conversation_id}/activate",
+        response_model=ActivateConversationResponse,
+        tags=["history"],
+    )
+    def activate_conversation(
+        conversation_id: int,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ActivateConversationResponse:
+        try:
+            summary = active_runtime.history.get_conversation(conversation_id)
+            if summary is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Conversation not found.",
+                )
+            turns = active_runtime.history.get_turns(conversation_id)
+            active_runtime.service.activate_conversation(conversation_id)
+        except HTTPException:
+            raise
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:
+            raise _service_error(error) from error
+
+        return ActivateConversationResponse(
+            conversation_id=conversation_id,
+            title=summary.title,
+            restored_turns=len(turns),
+        )
+
+    @application.patch(
+        "/api/conversations/{conversation_id}",
+        response_model=ConversationSummaryResponse,
+        tags=["history"],
+    )
+    def rename_conversation(
+        conversation_id: int,
+        payload: RenameConversationRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ConversationSummaryResponse:
+        try:
+            active_runtime.history.rename_conversation(conversation_id, payload.title)
+            summary = active_runtime.history.get_conversation(conversation_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception as error:
+            raise _service_error(error) from error
+
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        active_runtime.events.publish(
+            "history.conversation_renamed",
+            {"conversation_id": conversation_id, "title": summary.title},
+        )
+        return ConversationSummaryResponse(**asdict(summary))
+
+    @application.delete(
+        "/api/conversations/{conversation_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["history"],
+    )
+    def delete_conversation(
+        conversation_id: int,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> Response:
+        try:
+            deleted = active_runtime.history.delete_conversation(conversation_id)
+        except Exception as error:
+            raise _service_error(error) from error
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        detached = active_runtime.detach_deleted_conversation(conversation_id)
+        active_runtime.events.publish(
+            "history.conversation_deleted",
+            {"conversation_id": conversation_id, "detached_active": detached},
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.get(
         "/api/conversations/{conversation_id}",

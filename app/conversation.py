@@ -29,6 +29,8 @@ HistoryErrorCallback = Callable[[Exception], None]
 RecorderControl = Callable[[], None]
 ListeningStateCallback = Callable[[bool], None]
 ConversationEventCallback = Callable[[str, Mapping[str, Any]], None]
+ConversationContextLoader = Callable[[list[tuple[str, str]]], None]
+ConversationContextResetter = Callable[[], None]
 
 
 class HistoryStore(Protocol):
@@ -47,6 +49,10 @@ class HistoryStore(Protocol):
     ) -> tuple[int, int]: ...
 
     def create_conversation(self, title: str | None = None) -> int: ...
+
+    def get_conversation(self, conversation_id: int) -> Any | None: ...
+
+    def get_turns(self, conversation_id: int, *, limit: int | None = None) -> list[Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +91,8 @@ class ConversationService:
         reset_recorder: RecorderControl | None = None,
         on_listening_changed: ListeningStateCallback | None = None,
         on_event: ConversationEventCallback | None = None,
+        load_conversation_context: ConversationContextLoader | None = None,
+        reset_conversation_context: ConversationContextResetter | None = None,
     ) -> None:
         self._recorder = recorder
         self._transcriber = transcriber
@@ -99,6 +107,8 @@ class ConversationService:
         self._stop_recorder = stop_recorder
         self._reset_recorder = reset_recorder
         self._on_listening_changed = on_listening_changed
+        self._load_conversation_context = load_conversation_context
+        self._reset_conversation_context = reset_conversation_context
         self._event_callbacks: list[ConversationEventCallback] = []
         if on_event is not None:
             self._event_callbacks.append(on_event)
@@ -127,7 +137,19 @@ class ConversationService:
         not initialize Faster-Whisper, CUDA, pyttsx3, or the VMC avatar.
         """
 
-        from ai.llm import ask_ai
+        from ai import llm as llm_module
+
+        ask_ai = llm_module.ask_ai
+        load_short_term_context = getattr(
+            llm_module,
+            "load_short_term_context",
+            lambda turns: None,
+        )
+        reset_short_term_context = getattr(
+            llm_module,
+            "reset_short_term_context",
+            lambda: None,
+        )
         from audio.devices import resolve_audio_device
         from audio.microphone import MicrophoneRecorder
         from audio.tts import create_speaker
@@ -170,6 +192,8 @@ class ConversationService:
             speaker=speaker,
             stop_recorder=microphone.request_stop,
             reset_recorder=microphone.reset,
+            load_conversation_context=load_short_term_context,
+            reset_conversation_context=reset_short_term_context,
             **kwargs,
         )
 
@@ -187,7 +211,19 @@ class ConversationService:
         chat path and lets text-only users run Akira without audio input setup.
         """
 
-        from ai.llm import ask_ai
+        from ai import llm as llm_module
+
+        ask_ai = llm_module.ask_ai
+        load_short_term_context = getattr(
+            llm_module,
+            "load_short_term_context",
+            lambda turns: None,
+        )
+        reset_short_term_context = getattr(
+            llm_module,
+            "reset_short_term_context",
+            lambda: None,
+        )
 
         if enable_speech:
             from audio.devices import resolve_audio_device
@@ -213,6 +249,8 @@ class ConversationService:
             transcriber=lambda audio_file: "",
             responder=ask_ai,
             speaker=speaker,
+            load_conversation_context=load_short_term_context,
+            reset_conversation_context=reset_short_term_context,
             **kwargs,
         )
 
@@ -265,6 +303,9 @@ class ConversationService:
         """
 
         with self._turn_lock:
+            if self._reset_conversation_context is not None:
+                self._reset_conversation_context()
+
             if self._history_store is None:
                 with self._state_lock:
                     self._conversation_id = None
@@ -282,6 +323,68 @@ class ConversationService:
                 {"conversation_id": conversation_id, "title": title},
             )
             return conversation_id
+
+    def activate_conversation(self, conversation_id: int) -> int:
+        """Resume a saved conversation and restore its recent LLM context."""
+
+        if self._history_store is None:
+            raise RuntimeError("Chat history is disabled.")
+
+        selected_id = int(conversation_id)
+
+        with self._turn_lock:
+            summary = self._history_store.get_conversation(selected_id)
+            if summary is None:
+                raise KeyError(f"Conversation {selected_id} does not exist")
+
+            turns = self._history_store.get_turns(selected_id)
+            context = [
+                (str(turn.user_text), str(turn.assistant_text))
+                for turn in turns
+            ]
+
+            if self._load_conversation_context is not None:
+                self._load_conversation_context(context)
+
+            with self._state_lock:
+                self._conversation_id = selected_id
+
+            self._emit_event(
+                "conversation.changed",
+                {
+                    "conversation_id": selected_id,
+                    "title": getattr(summary, "title", None),
+                    "resumed": True,
+                    "restored_turns": len(turns),
+                },
+            )
+            return selected_id
+
+    def detach_conversation(self, conversation_id: int | None = None) -> bool:
+        """Forget the active history ID without creating another conversation.
+
+        The history page calls this when the currently active conversation is
+        deleted. The next completed turn will then create a fresh conversation
+        normally instead of trying to append to a deleted SQLite row.
+        """
+
+        with self._turn_lock:
+            with self._state_lock:
+                current = self._conversation_id
+                if current is None:
+                    return False
+                if conversation_id is not None and current != int(conversation_id):
+                    return False
+                self._conversation_id = None
+
+            if self._reset_conversation_context is not None:
+                self._reset_conversation_context()
+
+            self._emit_event(
+                "conversation.changed",
+                {"conversation_id": None, "title": None},
+            )
+            return True
 
     @property
     def is_running(self) -> bool:
