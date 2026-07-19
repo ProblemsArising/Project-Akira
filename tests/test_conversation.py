@@ -188,6 +188,24 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(history.created[-1], (2, "Second chat"))
         self.assertEqual(history.turns[-1]["conversation_id"], 2)
 
+    def test_detach_conversation_allows_fresh_history_after_delete(self):
+        history = FakeHistoryStore()
+        service, _ = self.make_service(history_store=history)
+        events = []
+        service.add_event_listener(lambda event_type, data: events.append((event_type, data)))
+
+        service.process_text("First", speak=False)
+        self.assertFalse(service.detach_conversation(999))
+        self.assertTrue(service.detach_conversation(1))
+        self.assertIsNone(service.current_conversation_id)
+
+        service.process_text("Fresh after delete", speak=False)
+        self.assertEqual(service.current_conversation_id, 2)
+        self.assertIn(
+            ("conversation.changed", {"conversation_id": None, "title": None}),
+            events,
+        )
+
     def test_history_can_be_disabled(self):
         service, _ = self.make_service(history_store=None)
 

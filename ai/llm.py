@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Iterable
 
 
 from config.settings import AppSettings, get_settings
@@ -53,6 +53,34 @@ class LocalLLM:
                     "content": get_personality(self.settings),
                 }
             ]
+
+    def load_short_term_history(
+        self,
+        turns: Iterable[tuple[str, str]],
+    ) -> None:
+        """Replace short-term context with turns from a saved conversation."""
+
+        with self._lock:
+            self.messages = [
+                {
+                    "role": "system",
+                    "content": get_personality(self.settings),
+                }
+            ]
+
+            for user_text, assistant_text in turns:
+                normalized_user = str(user_text or "").strip()
+                normalized_assistant = str(assistant_text or "").strip()
+                if normalized_user:
+                    self.messages.append(
+                        {"role": "user", "content": normalized_user}
+                    )
+                if normalized_assistant:
+                    self.messages.append(
+                        {"role": "assistant", "content": normalized_assistant}
+                    )
+
+            self._trim_short_term_memory()
 
     def _trim_short_term_memory(self) -> None:
         system_message = self.messages[0]
@@ -236,3 +264,15 @@ def ask_ai(prompt: str) -> str:
     """Backward-compatible responder used by ``ConversationService``."""
 
     return get_default_llm().ask(prompt)
+
+
+def reset_short_term_context() -> None:
+    """Start a clean LLM short-term conversation."""
+
+    get_default_llm().reset_short_term_memory()
+
+
+def load_short_term_context(turns: Iterable[tuple[str, str]]) -> None:
+    """Restore a saved conversation into the LLM short-term context."""
+
+    get_default_llm().load_short_term_history(turns)
