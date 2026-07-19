@@ -60,6 +60,7 @@ class ChatPageTests(unittest.TestCase):
         self.assertIn("Project Akira", root.text)
         self.assertIn('id="composer"', root.text)
         self.assertIn("/static/chat/app.js", root.text)
+        self.assertIn('href="/settings"', root.text)
         self.assertEqual(root.headers["cache-control"], "no-store")
         self.assertEqual(self.service_factory_calls, 0)
 

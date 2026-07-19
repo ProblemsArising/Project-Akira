@@ -33,11 +33,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
-from config.settings import get_settings
+from config.settings import get_settings, reset_settings, update_settings
+from config.settings_validation import SettingsValidationError, validate_settings_changes
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
+SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
 
 
 class ConversationServiceLike(Protocol):
@@ -236,6 +238,16 @@ class SettingsResponse(StrictModel):
     settings: dict[str, Any]
 
 
+class SettingsUpdateRequest(StrictModel):
+    changes: dict[str, Any]
+
+
+class SettingsMutationResponse(StrictModel):
+    settings: dict[str, Any]
+    changed_sections: list[str]
+    restart_required: bool
+
+
 def _get_runtime(request: Request) -> BackendRuntime:
     return request.app.state.runtime
 
@@ -348,6 +360,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=CHAT_WEB_ROOT),
         name="chat-static",
     )
+    application.mount(
+        "/static/settings",
+        StaticFiles(directory=SETTINGS_WEB_ROOT),
+        name="settings-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -356,6 +373,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             CHAT_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/settings", include_in_schema=False)
+    def settings_page() -> FileResponse:
+        """Serve the local Project Akira settings interface."""
+
+        return FileResponse(
+            SETTINGS_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
@@ -542,6 +569,71 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     )
     def settings() -> SettingsResponse:
         return SettingsResponse(settings=get_settings().to_dict())
+
+    @application.patch(
+        "/api/settings",
+        response_model=SettingsMutationResponse,
+        tags=["settings"],
+    )
+    def save_runtime_settings(
+        payload: SettingsUpdateRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> SettingsMutationResponse:
+        current = get_settings().to_dict()
+        try:
+            normalized = validate_settings_changes(payload.changes, current)
+        except SettingsValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        updated = update_settings(normalized)
+        changed_sections = sorted(normalized)
+        restart_required = active_runtime.service_loaded
+        active_runtime.events.publish(
+            "settings.updated",
+            {
+                "changed_sections": changed_sections,
+                "restart_required": restart_required,
+            },
+        )
+        return SettingsMutationResponse(
+            settings=updated.to_dict(),
+            changed_sections=changed_sections,
+            restart_required=restart_required,
+        )
+
+    @application.post(
+        "/api/settings/reset",
+        response_model=SettingsMutationResponse,
+        tags=["settings"],
+    )
+    def restore_default_settings(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> SettingsMutationResponse:
+        defaults = reset_settings()
+        changed_sections = [
+            "general",
+            "llm",
+            "personality",
+            "stt",
+            "audio",
+            "tts",
+            "avatar",
+            "memory",
+        ]
+        restart_required = active_runtime.service_loaded
+        active_runtime.events.publish(
+            "settings.updated",
+            {
+                "changed_sections": changed_sections,
+                "restart_required": restart_required,
+                "reset": True,
+            },
+        )
+        return SettingsMutationResponse(
+            settings=defaults.to_dict(),
+            changed_sections=changed_sections,
+            restart_required=restart_required,
+        )
 
     return application
 

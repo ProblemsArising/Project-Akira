@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Settings · Project Akira</title>
+  <link rel="stylesheet" href="/static/settings/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h1>Project Akira</h1>
+          <p>Local AI companion</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <nav class="topnav" aria-label="Primary navigation">
+          <a href="/">Chat</a>
+          <a class="active" href="/settings">Settings</a>
+        </nav>
+        <span id="saveState" class="save-state">Loading</span>
+      </div>
+    </header>
+
+    <main class="settings-layout">
+      <aside class="settings-sidebar">
+        <div class="sidebar-copy">
+          <h2>Settings</h2>
+          <p>Configure Akira without editing JSON.</p>
+        </div>
+        <label class="search-wrap">
+          <span class="sr-only">Search settings</span>
+          <input id="settingsSearch" type="search" placeholder="Search settings...">
+        </label>
+        <nav id="sectionNavigation" class="section-navigation" aria-label="Settings sections"></nav>
+      </aside>
+
+      <section class="settings-content">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Project configuration</p>
+            <h2>Customize Akira</h2>
+            <p>Changes are saved locally in <code>data/settings.json</code>.</p>
+          </div>
+          <div class="heading-actions">
+            <button id="resetButton" class="button ghost" type="button">Reset defaults</button>
+            <button id="saveButton" class="button primary" type="button" disabled>Save changes</button>
+          </div>
+        </div>
+
+        <div id="notice" class="notice" hidden>
+          <div>
+            <strong id="noticeTitle"></strong>
+            <p id="noticeText"></p>
+          </div>
+          <button id="dismissNotice" type="button" aria-label="Dismiss notice">×</button>
+        </div>
+
+        <form id="settingsForm" novalidate>
+          <div id="settingsSections" class="settings-sections"></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <template id="sectionTemplate">
+    <section class="settings-card">
+      <div class="section-heading">
+        <div>
+          <h3></h3>
+          <p></p>
+        </div>
+      </div>
+      <div class="field-grid common-fields"></div>
+      <details class="advanced-settings">
+        <summary>Advanced settings <span class="advanced-count"></span></summary>
+        <div class="field-grid advanced-fields"></div>
+      </details>
+    </section>
+  </template>
+
+  <template id="fieldTemplate">
+    <label class="setting-field">
+      <span class="field-heading">
+        <span class="field-label"></span>
+        <span class="field-value-hint"></span>
+      </span>
+      <span class="field-description"></span>
+      <span class="field-control"></span>
+      <span class="field-error" aria-live="polite"></span>
+    </label>
+  </template>
+
+  <script src="/static/settings/app.js" defer></script>
+</body>
+</html>
