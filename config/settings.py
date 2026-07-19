@@ -19,7 +19,7 @@ from typing import Any, Mapping, TypeVar
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SETTINGS_FILE = PROJECT_ROOT / "data" / "settings.json"
 SETTINGS_ENV_VAR = "AKIRA_SETTINGS_FILE"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -38,7 +38,7 @@ class LLMSettings:
     model: str = "gemma4-12b-qat-uncensored-hauhaucs-balanced"
     temperature: float = 0.75
     top_p: float = 0.9
-    max_tokens: int = 512
+    max_tokens: int = 1024
     max_short_term_messages: int = 20
     stop_sequences: list[str] = field(
         default_factory=lambda: [
@@ -54,9 +54,10 @@ class LLMSettings:
     empty_response_retries: int = 1
     retry_token_multiplier: float = 2.0
     max_retry_tokens: int = 2048
-    # Reserved for LM Studio's native /api/v1/chat backend. The current
-    # OpenAI-compatible chat-completions backend leaves model reasoning on auto.
-    reasoning_mode: str = "auto"
+    # Preferred reasoning setting. LM Studio's native API can enforce this;
+    # the current OpenAI-compatible backend keeps it in configuration until
+    # the backend selector/native LM Studio path is added.
+    reasoning_mode: str = "off"
 
 
 @dataclass
@@ -214,6 +215,36 @@ def _dataclass_from_mapping(cls: type[T], value: Any) -> T:
         return cls()
 
 
+
+
+def _migrate_settings_data(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Upgrade persisted settings from older Project Akira schemas.
+
+    Early v0.1 builds wrote ``llm.max_tokens`` as 180, then 512. Those
+    values remain in ``data/settings.json`` even after the dataclass default
+    changes, so users can otherwise stay stuck retrying at 360 tokens.
+    """
+
+    migrated = dict(data)
+    raw_version = migrated.get("schema_version", 1)
+    version = raw_version if isinstance(raw_version, int) else 1
+
+    if version < 3:
+        llm = dict(migrated.get("llm") or {})
+
+        # Upgrade only known historical defaults. Preserve deliberately custom
+        # limits such as 256, 768, or 2048.
+        if llm.get("max_tokens") in (None, 180, 360, 512):
+            llm["max_tokens"] = 1024
+
+        if llm.get("reasoning_mode") in (None, "auto"):
+            llm["reasoning_mode"] = "off"
+
+        migrated["llm"] = llm
+        migrated["schema_version"] = 3
+
+    return migrated
+
 def _from_dict(data: Any) -> AppSettings:
     if not isinstance(data, Mapping):
         return AppSettings()
@@ -286,7 +317,7 @@ def load_settings(
                 save_settings(settings, target)
             return settings
 
-        settings = _from_dict(raw)
+        settings = _from_dict(_migrate_settings_data(raw))
 
         # Rewrite after loading so newly introduced default fields appear in an
         # older settings file automatically.
