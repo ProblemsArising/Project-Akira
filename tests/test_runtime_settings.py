@@ -280,7 +280,10 @@ class RuntimeSettingsTests(unittest.TestCase):
 
         self.assertIs(service._speaker, speaker)
         kwargs = recorder_type.call_args.kwargs
-        self.assertEqual(kwargs["output_file"], "configured.wav")
+        expected_recording_file = (
+            Path(__file__).resolve().parents[1] / "configured.wav"
+        ).resolve()
+        self.assertEqual(kwargs["output_file"], expected_recording_file)
         self.assertEqual(kwargs["sample_rate"], 22050)
         self.assertEqual(kwargs["frame_ms"], 20)
         self.assertEqual(kwargs["end_silence_seconds"], 1.25)

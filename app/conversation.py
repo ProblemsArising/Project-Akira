@@ -154,6 +154,7 @@ class ConversationService:
         from audio.microphone import MicrophoneRecorder
         from audio.tts import create_speaker
         from audio.whisper_stt import transcribe
+        from app.paths import user_file_path
         from config.settings import get_settings
 
         settings = get_settings()
@@ -161,7 +162,7 @@ class ConversationService:
         output_selection = resolve_audio_device(settings.audio.output_device, "output")
 
         microphone = MicrophoneRecorder(
-            output_file=settings.audio.recording_file,
+            output_file=user_file_path(settings.audio.recording_file),
             input_device=None if input_selection is None else input_selection.index,
             sample_rate=settings.audio.sample_rate,
             channels=settings.audio.channels,

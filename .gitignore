@@ -23,3 +23,9 @@ data/chat_history.db-wal
 
 # Local microphone calibration recording
 data/calibration_sample.wav
+
+# PyInstaller build output
+/build/
+/dist/
+*.manifest
+

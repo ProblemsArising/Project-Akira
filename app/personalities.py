@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PERSONALITIES_FILE = PROJECT_ROOT / "data" / "personalities.json"
+from app.paths import USER_DATA_ROOT
+
+DEFAULT_PERSONALITIES_FILE = USER_DATA_ROOT / "personalities.json"
 PERSONALITIES_ENV_VAR = "AKIRA_PERSONALITIES_FILE"
 CURRENT_PERSONALITIES_SCHEMA = 1
 
