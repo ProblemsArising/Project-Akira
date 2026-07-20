@@ -15,3 +15,4 @@ httpx2>=2.0.0
 pywebview>=6.0,<7.0
 pystray>=0.19,<1.0
 Pillow>=10,<12
+discord.py>=2.4,<3
