@@ -19,6 +19,8 @@ from typing import Any, Protocol
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from app.tray import TrayController, TrayLaunchError
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_TITLE = "Project Akira"
@@ -47,6 +49,7 @@ ServerFactory = Callable[[Any], ServerLike]
 ReadinessProbe = Callable[[str, float], bool]
 SettingsLoader = Callable[[], Any]
 SettingsUpdater = Callable[[Mapping[str, Any]], Any]
+TrayFactory = Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -212,8 +215,11 @@ class DesktopApplication:
         avatar_x: int | None = None,
         avatar_y: int | None = None,
         avatar_maximized: bool | None = None,
+        system_tray_enabled: bool | None = None,
+        close_to_tray: bool | None = None,
         settings_loader: SettingsLoader | None = None,
         settings_updater: SettingsUpdater | None = None,
+        tray_factory: TrayFactory | None = None,
     ) -> None:
         self.backend = backend or BackendServer()
         self.title = str(title)
@@ -239,9 +245,19 @@ class DesktopApplication:
         self.avatar_x = None if avatar_x is None else int(avatar_x)
         self.avatar_y = None if avatar_y is None else int(avatar_y)
         self.avatar_maximized = avatar_maximized
+        self.system_tray_enabled = system_tray_enabled
+        self.close_to_tray = close_to_tray
         self._webview_module = webview_module
         self._settings_loader = settings_loader
         self._settings_updater = settings_updater
+        self._tray_factory_injected = tray_factory is not None
+        self._tray_factory = tray_factory or TrayController
+        self._tray: Any | None = None
+        self._main_window: Any | None = None
+        self._avatar_window: Any | None = None
+        self._quitting = False
+        self._close_to_tray_active = False
+        self._hide_notice_shown = False
 
     def _general_settings(self) -> Any:
         """Load desktop-window preferences without initializing AI services."""
@@ -269,6 +285,96 @@ class DesktopApplication:
             else bool(getattr(general, "avatar_always_on_top", False))
         )
         return enabled, on_top
+
+    def _tray_preferences(self) -> tuple[bool, bool]:
+        """Resolve command-line tray overrides against persisted settings."""
+
+        general = self._general_settings()
+        if self.system_tray_enabled is not None:
+            enabled = bool(self.system_tray_enabled)
+        elif self._webview_module is not None and not self._tray_factory_injected:
+            # A supplied webview module is the unit-test/dependency-injection path.
+            # Never create a real native tray icon from a fake GUI test unless a
+            # tray factory was explicitly supplied too.
+            enabled = False
+        else:
+            enabled = bool(getattr(general, "system_tray_enabled", False))
+        close_to_tray = (
+            bool(self.close_to_tray)
+            if self.close_to_tray is not None
+            else bool(getattr(general, "close_to_tray", True))
+        )
+        return enabled, close_to_tray
+
+    @staticmethod
+    def _show_window(window: Any | None) -> None:
+        if window is None:
+            return
+        try:
+            window.restore()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        try:
+            window.show()
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _show_main_window(self) -> None:
+        self._show_window(self._main_window)
+
+    def _show_avatar_window(self) -> None:
+        self._show_window(self._avatar_window)
+
+    def _hide_window_to_tray(self, window: Any, *, name: str) -> bool | None:
+        """Cancel a user close and hide the window while the tray stays alive."""
+
+        if self._quitting or not self._close_to_tray_active:
+            return None
+
+        try:
+            window.hide()
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+
+        if name == "main" and not self._hide_notice_shown:
+            self._hide_notice_shown = True
+            if self._tray is not None:
+                self._tray.notify(
+                    "Project Akira is still running. Use the tray icon to reopen or quit."
+                )
+        return False
+
+    def _attach_close_to_tray(self, window: Any, *, name: str) -> None:
+        events = getattr(window, "events", None)
+        if events is None:
+            return
+
+        def closing(*_args: Any) -> bool | None:
+            return self._hide_window_to_tray(window, name=name)
+
+        events.closing += closing
+
+    def _quit_application(self) -> None:
+        """Quit from the tray, allowing the native close events to proceed."""
+
+        if self._quitting:
+            return
+        self._quitting = True
+
+        tray = self._tray
+        if tray is not None:
+            tray.stop()
+
+        # Destroy the avatar first so the main window remains available until
+        # the final moment of shutdown. Window methods are thread-safe in
+        # pywebview's supported desktop backends.
+        for window in (self._avatar_window, self._main_window):
+            if window is None:
+                continue
+            try:
+                window.destroy()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
 
     @staticmethod
     def _optional_int(value: Any) -> int | None:
@@ -380,11 +486,12 @@ class DesktopApplication:
         initial: WindowGeometry,
         minimum_size: tuple[int, int],
     ) -> None:
-        """Track normal bounds and persist them when a window closes.
+        """Track and safely persist one window's last normal geometry.
 
-        pywebview emits move, resize, maximize, restore, and close events.
-        Writes are intentionally deferred until close so dragging a window does
-        not rewrite settings dozens of times per second.
+        ``closed`` may fire after pywebview has already discarded the native
+        handle.  At that point properties such as ``window.x`` can raise a
+        ``TypeError`` on Windows.  Geometry is therefore captured while the
+        window is alive and the closed handler only writes the cached values.
         """
 
         if not self._remember_geometry():
@@ -396,17 +503,23 @@ class DesktopApplication:
             "width": initial.width,
             "height": initial.height,
             "maximized": initial.maximized,
-            "saved": False,
+            "last_saved": None,
         }
+
+        def safe_property(attribute: str) -> Any:
+            try:
+                return getattr(window, attribute, None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return None
 
         def update_normal_bounds() -> None:
             if state["maximized"]:
                 return
 
-            current_x = self._optional_int(getattr(window, "x", None))
-            current_y = self._optional_int(getattr(window, "y", None))
-            current_width = self._optional_int(getattr(window, "width", None))
-            current_height = self._optional_int(getattr(window, "height", None))
+            current_x = self._optional_int(safe_property("x"))
+            current_y = self._optional_int(safe_property("y"))
+            current_width = self._optional_int(safe_property("width"))
+            current_height = self._optional_int(safe_property("height"))
 
             if current_x is not None:
                 state["x"] = current_x
@@ -424,7 +537,6 @@ class DesktopApplication:
             if state["maximized"]:
                 return
 
-            # pywebview may supply width and height to resized handlers.
             numeric = [
                 self._optional_int(value)
                 for value in args
@@ -442,22 +554,39 @@ class DesktopApplication:
             state["maximized"] = False
             update_normal_bounds()
 
-        def persist(*_args: Any) -> None:
-            if state["saved"]:
-                return
-            state["saved"] = True
-            update_normal_bounds()
-            self._update_settings(
-                {
-                    "general": {
-                        f"{name}_window_x": state["x"],
-                        f"{name}_window_y": state["y"],
-                        f"{name}_window_width": state["width"],
-                        f"{name}_window_height": state["height"],
-                        f"{name}_window_maximized": state["maximized"],
-                    }
-                }
+        def persist(*_args: Any, refresh: bool = True) -> None:
+            if refresh:
+                update_normal_bounds()
+
+            snapshot = (
+                state["x"],
+                state["y"],
+                state["width"],
+                state["height"],
+                state["maximized"],
             )
+            if snapshot == state["last_saved"]:
+                return
+
+            try:
+                self._update_settings(
+                    {
+                        "general": {
+                            f"{name}_window_x": state["x"],
+                            f"{name}_window_y": state["y"],
+                            f"{name}_window_width": state["width"],
+                            f"{name}_window_height": state["height"],
+                            f"{name}_window_maximized": state["maximized"],
+                        }
+                    }
+                )
+            except Exception as error:
+                print(f"⚠️ Could not save {name} window position: {error}")
+                return
+            state["last_saved"] = snapshot
+
+        def persist_cached(*_args: Any) -> None:
+            persist(refresh=False)
 
         events = getattr(window, "events", None)
         if events is None:
@@ -467,8 +596,10 @@ class DesktopApplication:
         events.resized += resized
         events.maximized += maximized
         events.restored += restored
+        # Save before a close is cancelled and converted into a tray hide.
         events.closing += persist
-        events.closed += persist
+        # Never touch native window properties after pywebview has closed it.
+        events.closed += persist_cached
 
     def _webview(self) -> Any:
         if self._webview_module is not None:
@@ -495,6 +626,9 @@ class DesktopApplication:
             webview.settings["ALLOW_DOWNLOADS"] = False
 
             main_geometry = self._resolved_geometry("main")
+            tray_enabled, close_to_tray = self._tray_preferences()
+            self._close_to_tray_active = bool(tray_enabled and close_to_tray)
+
             main_window = webview.create_window(
                 self.title,
                 url,
@@ -509,12 +643,15 @@ class DesktopApplication:
                 text_select=True,
                 zoomable=True,
             )
+            self._main_window = main_window
             self._track_window_geometry(
                 main_window,
                 name="main",
                 initial=main_geometry,
                 minimum_size=DEFAULT_MIN_SIZE,
             )
+            if self._close_to_tray_active:
+                self._attach_close_to_tray(main_window, name="main")
 
             avatar_enabled, avatar_on_top = self._avatar_window_preferences()
             if avatar_enabled:
@@ -534,12 +671,31 @@ class DesktopApplication:
                     text_select=False,
                     zoomable=True,
                 )
+                self._avatar_window = avatar_window
                 self._track_window_geometry(
                     avatar_window,
                     name="avatar",
                     initial=avatar_geometry,
                     minimum_size=DEFAULT_AVATAR_MIN_SIZE,
                 )
+                if self._close_to_tray_active:
+                    self._attach_close_to_tray(avatar_window, name="avatar")
+
+            if tray_enabled:
+                try:
+                    self._tray = self._tray_factory(
+                        base_url=url,
+                        show_main=self._show_main_window,
+                        show_avatar=(
+                            self._show_avatar_window
+                            if self._avatar_window is not None
+                            else None
+                        ),
+                        quit_application=self._quit_application,
+                    )
+                    self._tray.start()
+                except TrayLaunchError as error:
+                    raise DesktopLaunchError(str(error)) from error
 
             webview.start(
                 debug=self.debug,
@@ -548,6 +704,9 @@ class DesktopApplication:
             )
             return 0
         finally:
+            self._quitting = True
+            if self._tray is not None:
+                self._tray.stop()
             self.backend.stop()
 
 
@@ -637,6 +796,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Open the avatar window restored.",
     )
+    tray_visibility = parser.add_mutually_exclusive_group()
+    tray_visibility.add_argument(
+        "--tray",
+        dest="system_tray_enabled",
+        action="store_true",
+        help="Enable the Project Akira system-tray icon.",
+    )
+    tray_visibility.add_argument(
+        "--no-tray",
+        dest="system_tray_enabled",
+        action="store_false",
+        help="Disable the system-tray icon for this launch.",
+    )
+    close_behavior = parser.add_mutually_exclusive_group()
+    close_behavior.add_argument(
+        "--close-to-tray",
+        dest="close_to_tray",
+        action="store_true",
+        help="Hide native windows to the tray when their close button is used.",
+    )
+    close_behavior.add_argument(
+        "--exit-on-close",
+        dest="close_to_tray",
+        action="store_false",
+        help="Close windows normally instead of hiding them to the tray.",
+    )
+    parser.set_defaults(
+        system_tray_enabled=None,
+        close_to_tray=None,
+    )
     parser.add_argument(
         "--server-log-level",
         default="warning",
@@ -667,6 +856,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         avatar_x=arguments.avatar_x,
         avatar_y=arguments.avatar_y,
         avatar_maximized=arguments.avatar_maximized,
+        system_tray_enabled=arguments.system_tray_enabled,
+        close_to_tray=arguments.close_to_tray,
     )
 
     try:
@@ -685,6 +876,7 @@ __all__ = [
     "DesktopApplication",
     "DesktopLaunchError",
     "WindowGeometry",
+    "TrayFactory",
     "build_parser",
     "default_webview_storage_path",
     "find_available_port",
