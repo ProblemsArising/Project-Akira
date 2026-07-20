@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from app.startup import StartupRegistrationError, get_startup_manager
 from app.tray import TrayController, TrayLaunchError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -834,8 +835,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def sync_startup_preference() -> bool:
+    """Repair the Windows Run entry to match the saved setting.
+
+    This refreshes source-checkout paths after a virtual environment or project
+    move and later replaces them with the packaged executable automatically.
+    Startup-registration failure is nonfatal to an otherwise usable desktop app.
+    """
+
+    from config.settings import get_settings
+
+    desired = bool(get_settings().general.launch_on_startup)
+    try:
+        get_startup_manager().set_enabled(desired)
+    except StartupRegistrationError as error:
+        print(f"⚠️ Could not synchronize Windows startup: {error}")
+        return False
+    return True
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    sync_startup_preference()
     backend = BackendServer(
         host=arguments.host,
         port=arguments.port,
@@ -881,4 +902,5 @@ __all__ = [
     "default_webview_storage_path",
     "find_available_port",
     "main",
+    "sync_startup_preference",
 ]
