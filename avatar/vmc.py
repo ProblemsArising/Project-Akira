@@ -1215,7 +1215,7 @@ class VMCAvatarController:
         elif best_score == 1:
             strength = strength * 0.88
 
-        print(f"🎭 Expression: {preset} | scores={scores}")
+        print(f"Expression: {preset} | scores={scores}")
         self.set_expression(preset, strength=strength, hold_seconds=hold, apply=apply)
 
     def clear_expressions(self) -> None:
@@ -1398,7 +1398,7 @@ def set_expression(preset: str = "soft", strength: float = 1.0) -> None:
 
 
 def set_expression_from_text(text: str) -> None:
-    _controller.setexpression_from_text(text)
+    _controller.set_expression_from_text(text)
 
 
 def clear_expressions() -> None:
