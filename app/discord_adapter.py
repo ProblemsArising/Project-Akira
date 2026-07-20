@@ -18,7 +18,7 @@ import time
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 
 class DiscordClient(Protocol):
@@ -33,6 +33,7 @@ class DiscordClient(Protocol):
 
 DiscordClientFactory = Callable[[], DiscordClient]
 DiscordErrorCallback = Callable[[Exception], None]
+DiscordMessageHandler = Callable[[Any], Awaitable[Any]]
 
 
 class DiscordAdapterState(str, Enum):
@@ -54,8 +55,10 @@ class DiscordAdapterSnapshot:
     last_error: str | None = None
 
 
-def create_default_discord_client() -> DiscordClient:
-    """Create the production ``discord.py`` client without importing it early."""
+def create_default_discord_client(
+    message_handler: DiscordMessageHandler | None = None,
+) -> DiscordClient:
+    """Create the production client and attach the optional DM handler."""
 
     try:
         import discord
@@ -65,10 +68,16 @@ def create_default_discord_client() -> DiscordClient:
             "requirements before starting the Discord adapter."
         ) from error
 
-    # Issue #70 will enable and consume the message-related intents when DM
-    # handling is added. No privileged intents are needed for lifecycle setup.
     intents = discord.Intents.none()
-    return discord.Client(intents=intents)
+    intents.dm_messages = True
+    client = discord.Client(intents=intents)
+
+    if message_handler is not None:
+        @client.event
+        async def on_message(message: Any) -> None:
+            await message_handler(message)
+
+    return client
 
 
 class DiscordAdapterService:
@@ -84,9 +93,15 @@ class DiscordAdapterService:
         self,
         *,
         client_factory: DiscordClientFactory | None = None,
+        message_handler: DiscordMessageHandler | None = None,
         on_error: DiscordErrorCallback | None = None,
     ) -> None:
-        self._client_factory = client_factory or create_default_discord_client
+        if client_factory is None:
+            self._client_factory = lambda: create_default_discord_client(
+                message_handler
+            )
+        else:
+            self._client_factory = client_factory
         self._on_error = on_error
 
         self._lock = threading.RLock()
@@ -303,5 +318,9 @@ def get_discord_adapter_service() -> DiscordAdapterService:
     global _DEFAULT_SERVICE
     with _DEFAULT_SERVICE_LOCK:
         if _DEFAULT_SERVICE is None:
-            _DEFAULT_SERVICE = DiscordAdapterService()
+            from app.discord_dm import get_discord_dm_handler
+
+            _DEFAULT_SERVICE = DiscordAdapterService(
+                message_handler=get_discord_dm_handler(),
+            )
         return _DEFAULT_SERVICE
