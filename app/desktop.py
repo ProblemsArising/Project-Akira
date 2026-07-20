@@ -12,7 +12,8 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import URLError
@@ -45,6 +46,18 @@ class ServerLike(Protocol):
 ServerFactory = Callable[[Any], ServerLike]
 ReadinessProbe = Callable[[str, float], bool]
 SettingsLoader = Callable[[], Any]
+SettingsUpdater = Callable[[Mapping[str, Any]], Any]
+
+
+@dataclass(frozen=True)
+class WindowGeometry:
+    """Persistable logical-pixel geometry for one pywebview window."""
+
+    width: int
+    height: int
+    x: int | None = None
+    y: int | None = None
+    maximized: bool = False
 
 
 def find_available_port(host: str = DEFAULT_HOST) -> int:
@@ -184,31 +197,51 @@ class DesktopApplication:
         *,
         backend: BackendServer | None = None,
         title: str = DEFAULT_TITLE,
-        width: int = DEFAULT_WIDTH,
-        height: int = DEFAULT_HEIGHT,
-        maximized: bool = False,
+        width: int | None = None,
+        height: int | None = None,
+        x: int | None = None,
+        y: int | None = None,
+        maximized: bool | None = None,
         debug: bool = False,
         storage_path: Path | None = None,
         webview_module: Any | None = None,
         open_avatar_window: bool | None = None,
         avatar_always_on_top: bool | None = None,
-        avatar_width: int = DEFAULT_AVATAR_WIDTH,
-        avatar_height: int = DEFAULT_AVATAR_HEIGHT,
+        avatar_width: int | None = None,
+        avatar_height: int | None = None,
+        avatar_x: int | None = None,
+        avatar_y: int | None = None,
+        avatar_maximized: bool | None = None,
         settings_loader: SettingsLoader | None = None,
+        settings_updater: SettingsUpdater | None = None,
     ) -> None:
         self.backend = backend or BackendServer()
         self.title = str(title)
-        self.width = max(DEFAULT_MIN_SIZE[0], int(width))
-        self.height = max(DEFAULT_MIN_SIZE[1], int(height))
-        self.maximized = bool(maximized)
+        self.width = None if width is None else max(DEFAULT_MIN_SIZE[0], int(width))
+        self.height = None if height is None else max(DEFAULT_MIN_SIZE[1], int(height))
+        self.x = None if x is None else int(x)
+        self.y = None if y is None else int(y)
+        self.maximized = maximized
         self.debug = bool(debug)
         self.storage_path = storage_path or default_webview_storage_path()
         self.open_avatar_window = open_avatar_window
         self.avatar_always_on_top = avatar_always_on_top
-        self.avatar_width = max(DEFAULT_AVATAR_MIN_SIZE[0], int(avatar_width))
-        self.avatar_height = max(DEFAULT_AVATAR_MIN_SIZE[1], int(avatar_height))
+        self.avatar_width = (
+            None
+            if avatar_width is None
+            else max(DEFAULT_AVATAR_MIN_SIZE[0], int(avatar_width))
+        )
+        self.avatar_height = (
+            None
+            if avatar_height is None
+            else max(DEFAULT_AVATAR_MIN_SIZE[1], int(avatar_height))
+        )
+        self.avatar_x = None if avatar_x is None else int(avatar_x)
+        self.avatar_y = None if avatar_y is None else int(avatar_y)
+        self.avatar_maximized = avatar_maximized
         self._webview_module = webview_module
         self._settings_loader = settings_loader
+        self._settings_updater = settings_updater
 
     def _general_settings(self) -> Any:
         """Load desktop-window preferences without initializing AI services."""
@@ -237,6 +270,206 @@ class DesktopApplication:
         )
         return enabled, on_top
 
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _remember_geometry(self) -> bool:
+        return bool(
+            getattr(self._general_settings(), "remember_window_positions", True)
+        )
+
+    def _saved_geometry(
+        self,
+        name: str,
+        *,
+        default_width: int,
+        default_height: int,
+        minimum_size: tuple[int, int],
+    ) -> WindowGeometry:
+        """Read one window's saved bounds, falling back to safe defaults."""
+
+        general = self._general_settings()
+        width = self._optional_int(
+            getattr(general, f"{name}_window_width", None)
+        )
+        height = self._optional_int(
+            getattr(general, f"{name}_window_height", None)
+        )
+        x = self._optional_int(getattr(general, f"{name}_window_x", None))
+        y = self._optional_int(getattr(general, f"{name}_window_y", None))
+
+        return WindowGeometry(
+            width=max(minimum_size[0], width or default_width),
+            height=max(minimum_size[1], height or default_height),
+            x=x,
+            y=y,
+            maximized=bool(
+                getattr(general, f"{name}_window_maximized", False)
+            ),
+        )
+
+    def _resolved_geometry(self, name: str) -> WindowGeometry:
+        """Resolve CLI overrides against saved geometry and defaults."""
+
+        if name == "main":
+            saved = self._saved_geometry(
+                "main",
+                default_width=DEFAULT_WIDTH,
+                default_height=DEFAULT_HEIGHT,
+                minimum_size=DEFAULT_MIN_SIZE,
+            )
+            width = self.width
+            height = self.height
+            x = self.x
+            y = self.y
+            maximized = self.maximized
+            minimum = DEFAULT_MIN_SIZE
+        elif name == "avatar":
+            saved = self._saved_geometry(
+                "avatar",
+                default_width=DEFAULT_AVATAR_WIDTH,
+                default_height=DEFAULT_AVATAR_HEIGHT,
+                minimum_size=DEFAULT_AVATAR_MIN_SIZE,
+            )
+            width = self.avatar_width
+            height = self.avatar_height
+            x = self.avatar_x
+            y = self.avatar_y
+            maximized = self.avatar_maximized
+            minimum = DEFAULT_AVATAR_MIN_SIZE
+        else:
+            raise ValueError(f"Unknown desktop window: {name}")
+
+        if not self._remember_geometry():
+            saved = WindowGeometry(
+                width=DEFAULT_WIDTH if name == "main" else DEFAULT_AVATAR_WIDTH,
+                height=DEFAULT_HEIGHT if name == "main" else DEFAULT_AVATAR_HEIGHT,
+            )
+
+        return WindowGeometry(
+            width=max(minimum[0], width if width is not None else saved.width),
+            height=max(minimum[1], height if height is not None else saved.height),
+            x=x if x is not None else saved.x,
+            y=y if y is not None else saved.y,
+            maximized=(
+                bool(maximized)
+                if maximized is not None
+                else saved.maximized
+            ),
+        )
+
+    def _update_settings(self, changes: Mapping[str, Any]) -> Any:
+        if self._settings_updater is not None:
+            return self._settings_updater(changes)
+
+        from config.settings import update_settings
+
+        return update_settings(changes)
+
+    def _track_window_geometry(
+        self,
+        window: Any,
+        *,
+        name: str,
+        initial: WindowGeometry,
+        minimum_size: tuple[int, int],
+    ) -> None:
+        """Track normal bounds and persist them when a window closes.
+
+        pywebview emits move, resize, maximize, restore, and close events.
+        Writes are intentionally deferred until close so dragging a window does
+        not rewrite settings dozens of times per second.
+        """
+
+        if not self._remember_geometry():
+            return
+
+        state: dict[str, Any] = {
+            "x": initial.x,
+            "y": initial.y,
+            "width": initial.width,
+            "height": initial.height,
+            "maximized": initial.maximized,
+            "saved": False,
+        }
+
+        def update_normal_bounds() -> None:
+            if state["maximized"]:
+                return
+
+            current_x = self._optional_int(getattr(window, "x", None))
+            current_y = self._optional_int(getattr(window, "y", None))
+            current_width = self._optional_int(getattr(window, "width", None))
+            current_height = self._optional_int(getattr(window, "height", None))
+
+            if current_x is not None:
+                state["x"] = current_x
+            if current_y is not None:
+                state["y"] = current_y
+            if current_width is not None:
+                state["width"] = max(minimum_size[0], current_width)
+            if current_height is not None:
+                state["height"] = max(minimum_size[1], current_height)
+
+        def moved(*_args: Any) -> None:
+            update_normal_bounds()
+
+        def resized(*args: Any) -> None:
+            if state["maximized"]:
+                return
+
+            # pywebview may supply width and height to resized handlers.
+            numeric = [
+                self._optional_int(value)
+                for value in args
+                if self._optional_int(value) is not None
+            ]
+            if len(numeric) >= 2:
+                state["width"] = max(minimum_size[0], numeric[-2])
+                state["height"] = max(minimum_size[1], numeric[-1])
+            update_normal_bounds()
+
+        def maximized(*_args: Any) -> None:
+            state["maximized"] = True
+
+        def restored(*_args: Any) -> None:
+            state["maximized"] = False
+            update_normal_bounds()
+
+        def persist(*_args: Any) -> None:
+            if state["saved"]:
+                return
+            state["saved"] = True
+            update_normal_bounds()
+            self._update_settings(
+                {
+                    "general": {
+                        f"{name}_window_x": state["x"],
+                        f"{name}_window_y": state["y"],
+                        f"{name}_window_width": state["width"],
+                        f"{name}_window_height": state["height"],
+                        f"{name}_window_maximized": state["maximized"],
+                    }
+                }
+            )
+
+        events = getattr(window, "events", None)
+        if events is None:
+            return
+
+        events.moved += moved
+        events.resized += resized
+        events.maximized += maximized
+        events.restored += restored
+        events.closing += persist
+        events.closed += persist
+
     def _webview(self) -> Any:
         if self._webview_module is not None:
             return self._webview_module
@@ -261,32 +494,51 @@ class DesktopApplication:
             webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
             webview.settings["ALLOW_DOWNLOADS"] = False
 
-            webview.create_window(
+            main_geometry = self._resolved_geometry("main")
+            main_window = webview.create_window(
                 self.title,
                 url,
-                width=self.width,
-                height=self.height,
+                width=main_geometry.width,
+                height=main_geometry.height,
+                x=main_geometry.x,
+                y=main_geometry.y,
                 min_size=DEFAULT_MIN_SIZE,
                 resizable=True,
-                maximized=self.maximized,
+                maximized=main_geometry.maximized,
                 background_color="#0d0b16",
                 text_select=True,
                 zoomable=True,
             )
+            self._track_window_geometry(
+                main_window,
+                name="main",
+                initial=main_geometry,
+                minimum_size=DEFAULT_MIN_SIZE,
+            )
 
             avatar_enabled, avatar_on_top = self._avatar_window_preferences()
             if avatar_enabled:
-                webview.create_window(
+                avatar_geometry = self._resolved_geometry("avatar")
+                avatar_window = webview.create_window(
                     DEFAULT_AVATAR_TITLE,
                     f"{url}/avatar",
-                    width=self.avatar_width,
-                    height=self.avatar_height,
+                    width=avatar_geometry.width,
+                    height=avatar_geometry.height,
+                    x=avatar_geometry.x,
+                    y=avatar_geometry.y,
                     min_size=DEFAULT_AVATAR_MIN_SIZE,
                     resizable=True,
+                    maximized=avatar_geometry.maximized,
                     on_top=avatar_on_top,
                     background_color="#0d0b16",
                     text_select=False,
                     zoomable=True,
+                )
+                self._track_window_geometry(
+                    avatar_window,
+                    name="avatar",
+                    initial=avatar_geometry,
+                    minimum_size=DEFAULT_AVATAR_MIN_SIZE,
                 )
 
             webview.start(
@@ -314,12 +566,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Backend port. Zero selects an available port automatically.",
     )
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
-    parser.add_argument(
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--x", type=int, default=None)
+    parser.add_argument("--y", type=int, default=None)
+    main_window_state = parser.add_mutually_exclusive_group()
+    main_window_state.add_argument(
         "--maximized",
+        dest="maximized",
         action="store_true",
-        help="Open the desktop window maximized.",
+        help="Open the main window maximized.",
+    )
+    main_window_state.add_argument(
+        "--windowed",
+        dest="maximized",
+        action="store_false",
+        help="Open the main window restored even if it was maximized last time.",
     )
     parser.add_argument(
         "--debug",
@@ -353,11 +615,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not force the avatar stage above other windows.",
     )
     parser.set_defaults(
+        maximized=None,
         open_avatar_window=None,
         avatar_always_on_top=None,
+        avatar_maximized=None,
     )
-    parser.add_argument("--avatar-width", type=int, default=DEFAULT_AVATAR_WIDTH)
-    parser.add_argument("--avatar-height", type=int, default=DEFAULT_AVATAR_HEIGHT)
+    parser.add_argument("--avatar-width", type=int, default=None)
+    parser.add_argument("--avatar-height", type=int, default=None)
+    parser.add_argument("--avatar-x", type=int, default=None)
+    parser.add_argument("--avatar-y", type=int, default=None)
+    avatar_window_state = parser.add_mutually_exclusive_group()
+    avatar_window_state.add_argument(
+        "--avatar-maximized",
+        dest="avatar_maximized",
+        action="store_true",
+        help="Open the avatar window maximized.",
+    )
+    avatar_window_state.add_argument(
+        "--avatar-windowed",
+        dest="avatar_maximized",
+        action="store_false",
+        help="Open the avatar window restored.",
+    )
     parser.add_argument(
         "--server-log-level",
         default="warning",
@@ -377,12 +656,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         backend=backend,
         width=arguments.width,
         height=arguments.height,
+        x=arguments.x,
+        y=arguments.y,
         maximized=arguments.maximized,
         debug=arguments.debug,
         open_avatar_window=arguments.open_avatar_window,
         avatar_always_on_top=arguments.avatar_always_on_top,
         avatar_width=arguments.avatar_width,
         avatar_height=arguments.avatar_height,
+        avatar_x=arguments.avatar_x,
+        avatar_y=arguments.avatar_y,
+        avatar_maximized=arguments.avatar_maximized,
     )
 
     try:
@@ -400,6 +684,7 @@ __all__ = [
     "DEFAULT_AVATAR_WIDTH",
     "DesktopApplication",
     "DesktopLaunchError",
+    "WindowGeometry",
     "build_parser",
     "default_webview_storage_path",
     "find_available_port",
