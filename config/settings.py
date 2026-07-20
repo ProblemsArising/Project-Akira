@@ -29,6 +29,20 @@ class GeneralSettings:
     avatar_always_on_top: bool = False
     remember_window_positions: bool = True
 
+    # Native desktop-window bounds in logical pixels. ``None`` lets pywebview
+    # center a window on its first launch.
+    main_window_x: int | None = None
+    main_window_y: int | None = None
+    main_window_width: int | None = None
+    main_window_height: int | None = None
+    main_window_maximized: bool = False
+
+    avatar_window_x: int | None = None
+    avatar_window_y: int | None = None
+    avatar_window_width: int | None = None
+    avatar_window_height: int | None = None
+    avatar_window_maximized: bool = False
+
 
 @dataclass
 class LLMSettings:
