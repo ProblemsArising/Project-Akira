@@ -59,6 +59,7 @@ HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
 PERSONALITIES_WEB_ROOT = PROJECT_ROOT / "web" / "personalities"
 AUDIO_WEB_ROOT = PROJECT_ROOT / "web" / "audio"
 MODELS_WEB_ROOT = PROJECT_ROOT / "web" / "models"
+AVATAR_WEB_ROOT = PROJECT_ROOT / "web" / "avatar"
 CALIBRATION_SAMPLE_PATH = PROJECT_ROOT / "data" / "calibration_sample.wav"
 
 
@@ -652,6 +653,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=MODELS_WEB_ROOT),
         name="models-static",
     )
+    application.mount(
+        "/static/avatar",
+        StaticFiles(directory=AVATAR_WEB_ROOT),
+        name="avatar-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -710,6 +716,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             MODELS_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/avatar", include_in_schema=False)
+    def avatar_page() -> FileResponse:
+        """Serve the dedicated desktop avatar-stage shell."""
+
+        return FileResponse(
+            AVATAR_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )

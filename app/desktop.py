@@ -24,6 +24,10 @@ DEFAULT_TITLE = "Project Akira"
 DEFAULT_WIDTH = 1180
 DEFAULT_HEIGHT = 780
 DEFAULT_MIN_SIZE = (800, 560)
+DEFAULT_AVATAR_TITLE = "Akira"
+DEFAULT_AVATAR_WIDTH = 420
+DEFAULT_AVATAR_HEIGHT = 680
+DEFAULT_AVATAR_MIN_SIZE = (300, 420)
 DEFAULT_STARTUP_TIMEOUT = 20.0
 
 
@@ -40,6 +44,7 @@ class ServerLike(Protocol):
 
 ServerFactory = Callable[[Any], ServerLike]
 ReadinessProbe = Callable[[str, float], bool]
+SettingsLoader = Callable[[], Any]
 
 
 def find_available_port(host: str = DEFAULT_HOST) -> int:
@@ -185,6 +190,11 @@ class DesktopApplication:
         debug: bool = False,
         storage_path: Path | None = None,
         webview_module: Any | None = None,
+        open_avatar_window: bool | None = None,
+        avatar_always_on_top: bool | None = None,
+        avatar_width: int = DEFAULT_AVATAR_WIDTH,
+        avatar_height: int = DEFAULT_AVATAR_HEIGHT,
+        settings_loader: SettingsLoader | None = None,
     ) -> None:
         self.backend = backend or BackendServer()
         self.title = str(title)
@@ -193,7 +203,39 @@ class DesktopApplication:
         self.maximized = bool(maximized)
         self.debug = bool(debug)
         self.storage_path = storage_path or default_webview_storage_path()
+        self.open_avatar_window = open_avatar_window
+        self.avatar_always_on_top = avatar_always_on_top
+        self.avatar_width = max(DEFAULT_AVATAR_MIN_SIZE[0], int(avatar_width))
+        self.avatar_height = max(DEFAULT_AVATAR_MIN_SIZE[1], int(avatar_height))
         self._webview_module = webview_module
+        self._settings_loader = settings_loader
+
+    def _general_settings(self) -> Any:
+        """Load desktop-window preferences without initializing AI services."""
+
+        if self._settings_loader is not None:
+            settings = self._settings_loader()
+        else:
+            from config.settings import get_settings
+
+            settings = get_settings()
+        return settings.general
+
+    def _avatar_window_preferences(self) -> tuple[bool, bool]:
+        """Resolve CLI overrides against the persisted desktop settings."""
+
+        general = self._general_settings()
+        enabled = (
+            bool(self.open_avatar_window)
+            if self.open_avatar_window is not None
+            else bool(getattr(general, "open_avatar_window", True))
+        )
+        on_top = (
+            bool(self.avatar_always_on_top)
+            if self.avatar_always_on_top is not None
+            else bool(getattr(general, "avatar_always_on_top", False))
+        )
+        return enabled, on_top
 
     def _webview(self) -> Any:
         if self._webview_module is not None:
@@ -231,6 +273,22 @@ class DesktopApplication:
                 text_select=True,
                 zoomable=True,
             )
+
+            avatar_enabled, avatar_on_top = self._avatar_window_preferences()
+            if avatar_enabled:
+                webview.create_window(
+                    DEFAULT_AVATAR_TITLE,
+                    f"{url}/avatar",
+                    width=self.avatar_width,
+                    height=self.avatar_height,
+                    min_size=DEFAULT_AVATAR_MIN_SIZE,
+                    resizable=True,
+                    on_top=avatar_on_top,
+                    background_color="#0d0b16",
+                    text_select=False,
+                    zoomable=True,
+                )
+
             webview.start(
                 debug=self.debug,
                 private_mode=False,
@@ -268,6 +326,38 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable pywebview debug mode and developer tools.",
     )
+    avatar_visibility = parser.add_mutually_exclusive_group()
+    avatar_visibility.add_argument(
+        "--avatar-window",
+        dest="open_avatar_window",
+        action="store_true",
+        help="Open the separate avatar stage regardless of saved settings.",
+    )
+    avatar_visibility.add_argument(
+        "--no-avatar-window",
+        dest="open_avatar_window",
+        action="store_false",
+        help="Launch only the main Project Akira window.",
+    )
+    avatar_layer = parser.add_mutually_exclusive_group()
+    avatar_layer.add_argument(
+        "--avatar-always-on-top",
+        dest="avatar_always_on_top",
+        action="store_true",
+        help="Keep the avatar stage above other windows.",
+    )
+    avatar_layer.add_argument(
+        "--avatar-normal-z-order",
+        dest="avatar_always_on_top",
+        action="store_false",
+        help="Do not force the avatar stage above other windows.",
+    )
+    parser.set_defaults(
+        open_avatar_window=None,
+        avatar_always_on_top=None,
+    )
+    parser.add_argument("--avatar-width", type=int, default=DEFAULT_AVATAR_WIDTH)
+    parser.add_argument("--avatar-height", type=int, default=DEFAULT_AVATAR_HEIGHT)
     parser.add_argument(
         "--server-log-level",
         default="warning",
@@ -289,6 +379,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         height=arguments.height,
         maximized=arguments.maximized,
         debug=arguments.debug,
+        open_avatar_window=arguments.open_avatar_window,
+        avatar_always_on_top=arguments.avatar_always_on_top,
+        avatar_width=arguments.avatar_width,
+        avatar_height=arguments.avatar_height,
     )
 
     try:
@@ -300,6 +394,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "BackendServer",
+    "DEFAULT_AVATAR_HEIGHT",
+    "DEFAULT_AVATAR_MIN_SIZE",
+    "DEFAULT_AVATAR_TITLE",
+    "DEFAULT_AVATAR_WIDTH",
     "DesktopApplication",
     "DesktopLaunchError",
     "build_parser",
