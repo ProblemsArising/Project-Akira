@@ -33,6 +33,8 @@ class LocalLLM:
         # Supplying an OpenAI-style client explicitly keeps unit tests and custom
         # integrations on the compatibility endpoint.
         self._force_openai_compatible = client is not None
+        self._owns_client = client is None
+        self._owns_native_client = native_client is None
         self.client = client
         self.native_client = native_client
 
@@ -55,6 +57,20 @@ class LocalLLM:
             }
         ]
         self._lock = threading.RLock()
+
+    def close(self) -> None:
+        """Release HTTP clients owned by this LLM instance."""
+
+        # Wait for any active generation before closing its transport.
+        with self._lock:
+            if self._owns_native_client and self.native_client is not None:
+                close = getattr(self.native_client, "close", None)
+                if callable(close):
+                    close()
+            if self._owns_client and self.client is not None:
+                close = getattr(self.client, "close", None)
+                if callable(close):
+                    close()
 
     def _uses_native_lm_studio(self) -> bool:
         """Use LM Studio native chat when a reasoning mode must be enforced."""
@@ -485,3 +501,18 @@ def refresh_personality_prompt(prompt: str | None = None) -> bool:
         _DEFAULT_LLM.set_system_prompt(resolved)
         _DEFAULT_FINGERPRINT = _settings_fingerprint(settings)
         return True
+
+
+def invalidate_default_llm() -> bool:
+    """Discard the cached LLM so changed backend/model settings apply next turn."""
+
+    global _DEFAULT_LLM, _DEFAULT_FINGERPRINT
+
+    with _DEFAULT_LOCK:
+        previous = _DEFAULT_LLM
+        _DEFAULT_LLM = None
+        _DEFAULT_FINGERPRINT = None
+    if previous is not None:
+        previous.close()
+        return True
+    return False

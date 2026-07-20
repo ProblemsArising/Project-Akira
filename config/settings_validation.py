@@ -27,6 +27,7 @@ _NULLABLE_TYPES: dict[tuple[str, str], tuple[type, ...]] = {
 }
 
 _ENUMS: dict[tuple[str, str], set[str]] = {
+    ("llm", "backend"): {"lm_studio", "openai_compatible"},
     ("llm", "reasoning_mode"): {"off", "auto", "low", "medium", "high", "on"},
     ("stt", "device"): {"auto", "cpu", "cuda"},
     ("stt", "compute_type"): {
