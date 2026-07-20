@@ -49,6 +49,8 @@ CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
 SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
 HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
 PERSONALITIES_WEB_ROOT = PROJECT_ROOT / "web" / "personalities"
+AUDIO_WEB_ROOT = PROJECT_ROOT / "web" / "audio"
+CALIBRATION_SAMPLE_PATH = PROJECT_ROOT / "data" / "calibration_sample.wav"
 
 
 class ConversationServiceLike(Protocol):
@@ -93,6 +95,7 @@ class ConversationServiceLike(Protocol):
 ServiceFactory = Callable[[], ConversationServiceLike]
 HistoryFactory = Callable[[], ChatHistoryStore]
 PersonalityFactory = Callable[[], PersonalityStore]
+CalibrationFactory = Callable[..., Any]
 
 
 class BackendRuntime:
@@ -104,11 +107,13 @@ class BackendRuntime:
         service_factory: ServiceFactory | None = None,
         history_factory: HistoryFactory = get_history_store,
         personality_factory: PersonalityFactory = get_personality_store,
+        calibration_factory: CalibrationFactory | None = None,
         event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
         self._history_factory = history_factory
         self._personality_factory = personality_factory
+        self._calibration_factory = calibration_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
         self._personalities: PersonalityStore | None = None
@@ -180,6 +185,23 @@ class BackendRuntime:
         if not callable(detach):
             return False
         return bool(detach(conversation_id))
+
+    def create_audio_calibration(
+        self,
+        *,
+        input_device: int | str | None | object = ...,
+    ) -> Any:
+        """Create a short-lived microphone calibration session lazily."""
+
+        if self._calibration_factory is not None:
+            return self._calibration_factory(input_device=input_device)
+
+        from audio.calibration import AudioCalibrationSession
+
+        return AudioCalibrationSession(
+            input_device=input_device,
+            output_file=CALIBRATION_SAMPLE_PATH,
+        )
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -293,6 +315,23 @@ class SettingsMutationResponse(StrictModel):
     settings: dict[str, Any]
     changed_sections: list[str]
     restart_required: bool
+
+class AudioDeviceResponse(StrictModel):
+    index: int
+    name: str
+    host_api: str
+    selection_key: str
+    max_input_channels: int
+    max_output_channels: int
+    default_sample_rate: float
+    is_default_input: bool
+    is_default_output: bool
+
+
+class AudioDeviceListResponse(StrictModel):
+    configured_input: int | str | None
+    devices: list[AudioDeviceResponse]
+
 
 class PersonalityPresetResponse(StrictModel):
     id: str
@@ -496,6 +535,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=PERSONALITIES_WEB_ROOT),
         name="personalities-static",
     )
+    application.mount(
+        "/static/audio",
+        StaticFiles(directory=AUDIO_WEB_ROOT),
+        name="audio-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -534,6 +578,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             PERSONALITIES_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/audio", include_in_schema=False)
+    def audio_calibration_page() -> FileResponse:
+        """Serve the local microphone calibration interface."""
+
+        return FileResponse(
+            AUDIO_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
@@ -993,6 +1047,192 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
             {"preset_id": preset_id},
         )
         return Response(status_code=204)
+
+    @application.get(
+        "/api/audio/devices",
+        response_model=AudioDeviceListResponse,
+        tags=["audio"],
+    )
+    def audio_input_devices() -> AudioDeviceListResponse:
+        """Return a concise list of microphones for the calibration page."""
+
+        try:
+            from audio.devices import (
+                list_audio_devices,
+                preferred_audio_devices,
+                resolve_audio_device,
+            )
+
+            all_devices = list_audio_devices()
+            devices = preferred_audio_devices(devices=all_devices, kind="input")
+            configured = get_settings().audio.input_device
+            if configured is not None:
+                selected = resolve_audio_device(configured, "input", devices=all_devices)
+                if selected is not None and all(
+                    item.index != selected.index for item in devices
+                ):
+                    devices.append(selected)
+            devices.sort(key=lambda item: (item.name.casefold(), item.index))
+        except Exception as error:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Could not query microphone devices: {error}",
+            ) from error
+
+        return AudioDeviceListResponse(
+            configured_input=get_settings().audio.input_device,
+            devices=[AudioDeviceResponse(**device.to_dict()) for device in devices],
+        )
+
+    @application.get(
+        "/api/audio/calibration/sample",
+        tags=["audio"],
+        include_in_schema=False,
+    )
+    def calibration_sample() -> FileResponse:
+        if not CALIBRATION_SAMPLE_PATH.exists():
+            raise HTTPException(status_code=404, detail="No calibration sample exists yet.")
+        return FileResponse(
+            CALIBRATION_SAMPLE_PATH,
+            media_type="audio/wav",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.websocket("/api/audio/calibration")
+    async def websocket_audio_calibration(websocket: WebSocket) -> None:
+        """Stream live microphone levels during one short calibration pass."""
+
+        await websocket.accept()
+        active_session: Any | None = None
+        try:
+            settings_snapshot = get_settings().audio
+            await websocket.send_json(
+                {
+                    "type": "calibration.ready",
+                    "data": {
+                        "configured_input": settings_snapshot.input_device,
+                        "duration_seconds": 7.0,
+                        "calibration_seconds": max(
+                            0.6,
+                            float(settings_snapshot.calibration_seconds),
+                        ),
+                    },
+                }
+            )
+
+            while True:
+                payload = await websocket.receive_json()
+                command = payload.get("type") if isinstance(payload, dict) else None
+
+                if command == "ping":
+                    await websocket.send_json(
+                        {"type": "calibration.pong", "data": payload.get("data")}
+                    )
+                    continue
+
+                if command != "start":
+                    await websocket.send_json(
+                        {
+                            "type": "calibration.error",
+                            "data": {"error": "Supported commands: start, ping."},
+                        }
+                    )
+                    continue
+
+                if backend_runtime.status()["is_listening"]:
+                    await websocket.send_json(
+                        {
+                            "type": "calibration.error",
+                            "data": {
+                                "error": (
+                                    "Stop normal microphone listening before running "
+                                    "audio calibration."
+                                )
+                            },
+                        }
+                    )
+                    continue
+
+                duration = min(max(float(payload.get("duration_seconds", 7.0)), 2.0), 20.0)
+                quiet_seconds = min(
+                    max(float(payload.get("calibration_seconds", 1.5)), 0.3),
+                    max(0.3, duration - 0.75),
+                )
+                input_device = payload.get(
+                    "input_device",
+                    get_settings().audio.input_device,
+                )
+                active_session = backend_runtime.create_audio_calibration(
+                    input_device=input_device,
+                )
+
+                await websocket.send_json(
+                    {
+                        "type": "calibration.started",
+                        "data": {
+                            "duration_seconds": duration,
+                            "calibration_seconds": quiet_seconds,
+                        },
+                    }
+                )
+
+                loop = asyncio.get_running_loop()
+                levels: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
+
+                def publish_level(level: dict[str, Any]) -> None:
+                    def put_latest() -> None:
+                        if levels.full():
+                            with suppress(asyncio.QueueEmpty):
+                                levels.get_nowait()
+                        levels.put_nowait(dict(level))
+
+                    loop.call_soon_threadsafe(put_latest)
+
+                task = asyncio.create_task(
+                    asyncio.to_thread(
+                        active_session.run,
+                        duration_seconds=duration,
+                        calibration_seconds=quiet_seconds,
+                        on_level=publish_level,
+                    )
+                )
+
+                while not task.done() or not levels.empty():
+                    try:
+                        level = await asyncio.wait_for(levels.get(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        continue
+                    await websocket.send_json(
+                        {"type": "calibration.level", "data": level}
+                    )
+
+                try:
+                    result = await task
+                except Exception as error:
+                    await websocket.send_json(
+                        {
+                            "type": "calibration.error",
+                            "data": {"error": str(error)},
+                        }
+                    )
+                else:
+                    result_data = result.to_dict()
+                    result_data["sample_url"] = (
+                        "/api/audio/calibration/sample?cache="
+                        f"{int(asyncio.get_running_loop().time() * 1000)}"
+                    )
+                    await websocket.send_json(
+                        {"type": "calibration.completed", "data": result_data}
+                    )
+                finally:
+                    active_session = None
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if active_session is not None:
+                request_stop = getattr(active_session, "request_stop", None)
+                if callable(request_stop):
+                    request_stop()
 
     @application.get(
         "/api/settings",
