@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Audio calibration · Project Akira</title>
+  <link rel="stylesheet" href="/static/audio/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h1>Project Akira</h1>
+          <p>Local AI companion</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <nav class="topnav" aria-label="Primary navigation">
+          <a href="/">Chat</a>
+          <a href="/history">History</a>
+          <a href="/personalities">Personalities</a>
+          <a class="active" href="/audio">Audio</a>
+          <a href="/settings">Settings</a>
+        </nav>
+        <span id="connectionBadge" class="connection-badge offline">
+          <span class="connection-dot"></span>
+          <span id="connectionText">Connecting</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="audio-layout">
+      <section class="hero-card">
+        <div>
+          <p class="eyebrow">Microphone setup</p>
+          <h2>Audio calibration</h2>
+          <p class="hero-copy">Measure room noise, test speech detection, and hear the exact audio Whisper receives.</p>
+        </div>
+        <div class="hero-steps" aria-label="Calibration steps">
+          <span id="stepQuiet" class="step active"><b>1</b> Stay quiet</span>
+          <span id="stepSpeak" class="step"><b>2</b> Speak normally</span>
+          <span id="stepReview" class="step"><b>3</b> Review</span>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" hidden>
+        <div>
+          <strong id="noticeTitle"></strong>
+          <p id="noticeText"></p>
+        </div>
+        <button id="dismissNotice" type="button" aria-label="Dismiss">×</button>
+      </div>
+
+      <section class="meter-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">Live input</p>
+            <h3 id="calibrationStatus">Ready to test</h3>
+          </div>
+          <span id="phaseBadge" class="phase-badge">Idle</span>
+        </div>
+
+        <div class="meter-wrap">
+          <div class="meter-scale">
+            <span>Silent</span><span>Normal voice</span><span>Loud</span>
+          </div>
+          <div class="meter-track" aria-label="Microphone level">
+            <div id="meterFill" class="meter-fill"></div>
+            <div id="stopMarker" class="threshold-marker stop" title="Stop threshold"><span>stop</span></div>
+            <div id="startMarker" class="threshold-marker start" title="Start threshold"><span>start</span></div>
+          </div>
+          <div class="meter-readout">
+            <strong id="levelValue">0.0000</strong>
+            <span id="dbValue">−∞ dBFS</span>
+            <span id="progressValue">0%</span>
+          </div>
+        </div>
+
+        <div class="test-controls">
+          <label class="field wide">
+            <span>Microphone</span>
+            <select id="inputDevice">
+              <option value="">System default (recommended)</option>
+            </select>
+            <small>System default is safest on Windows. Advanced endpoints can behave differently even for the same physical mic.</small>
+          </label>
+          <label class="field compact">
+            <span>Test length</span>
+            <select id="durationSeconds">
+              <option value="5">5 seconds</option>
+              <option value="7" selected>7 seconds</option>
+              <option value="10">10 seconds</option>
+            </select>
+          </label>
+          <button id="startButton" class="button primary" type="button">Start calibration</button>
+        </div>
+      </section>
+
+      <div class="content-grid">
+        <section class="settings-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">Voice detection</p>
+              <h3>Tune VAD</h3>
+            </div>
+            <button id="recommendedButton" class="button ghost" type="button" disabled>Use recommended</button>
+          </div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Start multiplier</span>
+              <input id="startMultiplier" type="number" min="0.1" max="100" step="0.1">
+              <small>Higher values require louder speech to begin recording.</small>
+            </label>
+            <label class="field">
+              <span>Stop multiplier</span>
+              <input id="endMultiplier" type="number" min="0.1" max="100" step="0.1">
+              <small>Controls what counts as continued speech after recording starts.</small>
+            </label>
+            <label class="field">
+              <span>Minimum start threshold</span>
+              <input id="minStartThreshold" type="number" min="0" max="1" step="0.0005">
+              <small>Safety floor used even in an extremely quiet room.</small>
+            </label>
+            <label class="field">
+              <span>Minimum stop threshold</span>
+              <input id="minEndThreshold" type="number" min="0" max="1" step="0.0005">
+              <small>Lower than start so short pauses do not cut speech off.</small>
+            </label>
+            <label class="field">
+              <span>Silence before stop</span>
+              <div class="unit-input"><input id="endSilence" type="number" min="0.05" max="30" step="0.1"><span>sec</span></div>
+              <small>How long Akira waits after you stop talking.</small>
+            </label>
+            <label class="field">
+              <span>Noise sample length</span>
+              <div class="unit-input"><input id="calibrationSeconds" type="number" min="0.3" max="5" step="0.1"><span>sec</span></div>
+              <small>Stay quiet during this first part of each recording.</small>
+            </label>
+          </div>
+
+          <div class="settings-actions">
+            <span id="saveState" class="save-state">No unsaved changes</span>
+            <button id="saveButton" class="button primary" type="button">Save audio settings</button>
+          </div>
+        </section>
+
+        <section class="results-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">Last test</p>
+              <h3>Results</h3>
+            </div>
+          </div>
+
+          <div id="emptyResults" class="empty-results">
+            Run a calibration to measure your room and microphone.
+          </div>
+          <div id="results" hidden>
+            <div class="result-grid">
+              <div class="result"><span>Noise floor</span><strong id="noiseFloor">—</strong></div>
+              <div class="result"><span>Speech peak</span><strong id="speechPeak">—</strong></div>
+              <div class="result"><span>Suggested start</span><strong id="suggestedStart">—</strong></div>
+              <div class="result"><span>Suggested stop</span><strong id="suggestedEnd">—</strong></div>
+            </div>
+            <div class="sample-box">
+              <div>
+                <strong>Captured speech sample</strong>
+                <p>If this sounds distorted or garbled, change the microphone selection before adjusting Whisper.</p>
+              </div>
+              <audio id="samplePlayer" controls preload="none"></audio>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="/static/audio/app.js" defer></script>
+</body>
+</html>
