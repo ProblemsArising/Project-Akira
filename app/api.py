@@ -34,6 +34,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
+from app.model_backends import (
+    ModelBackendClient,
+    ModelBackendError,
+    ModelDiscovery,
+    ModelInfo,
+    normalize_backend,
+    normalize_base_url,
+)
 from app.personalities import (
     PersonalityPreset,
     PersonalityStore,
@@ -50,6 +58,7 @@ SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
 HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
 PERSONALITIES_WEB_ROOT = PROJECT_ROOT / "web" / "personalities"
 AUDIO_WEB_ROOT = PROJECT_ROOT / "web" / "audio"
+MODELS_WEB_ROOT = PROJECT_ROOT / "web" / "models"
 CALIBRATION_SAMPLE_PATH = PROJECT_ROOT / "data" / "calibration_sample.wav"
 
 
@@ -96,6 +105,7 @@ ServiceFactory = Callable[[], ConversationServiceLike]
 HistoryFactory = Callable[[], ChatHistoryStore]
 PersonalityFactory = Callable[[], PersonalityStore]
 CalibrationFactory = Callable[..., Any]
+ModelBackendFactory = Callable[[], ModelBackendClient]
 
 
 class BackendRuntime:
@@ -108,12 +118,14 @@ class BackendRuntime:
         history_factory: HistoryFactory = get_history_store,
         personality_factory: PersonalityFactory = get_personality_store,
         calibration_factory: CalibrationFactory | None = None,
+        model_backend_factory: ModelBackendFactory | None = None,
         event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
         self._history_factory = history_factory
         self._personality_factory = personality_factory
         self._calibration_factory = calibration_factory
+        self._model_backend_factory = model_backend_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
         self._personalities: PersonalityStore | None = None
@@ -202,6 +214,13 @@ class BackendRuntime:
             input_device=input_device,
             output_file=CALIBRATION_SAMPLE_PATH,
         )
+
+    def create_model_backend_client(self) -> ModelBackendClient:
+        """Create a short-lived model discovery/management client."""
+
+        if self._model_backend_factory is not None:
+            return self._model_backend_factory()
+        return ModelBackendClient()
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -316,6 +335,75 @@ class SettingsMutationResponse(StrictModel):
     changed_sections: list[str]
     restart_required: bool
 
+class ModelConfigResponse(StrictModel):
+    backend: str
+    base_url: str
+    api_key: str
+    model: str
+    reasoning_mode: str
+    service_loaded: bool
+
+
+class ModelConnectionRequest(StrictModel):
+    backend: str
+    base_url: str = Field(min_length=1, max_length=2_000)
+    api_key: str = Field(default="", max_length=10_000)
+
+
+class ModelInfoResponse(StrictModel):
+    id: str
+    display_name: str
+    model_type: str
+    publisher: str
+    architecture: str | None
+    quantization: str | None
+    params: str | None
+    size_bytes: int | None
+    max_context_length: int | None
+    loaded: bool
+    instance_ids: list[str]
+    reasoning_options: list[str]
+    default_reasoning: str | None
+    vision: bool
+    tool_use: bool
+    description: str | None
+
+
+class ModelDiscoveryResponse(StrictModel):
+    backend: str
+    base_url: str
+    api_url: str
+    models: list[ModelInfoResponse]
+
+
+class ModelSelectionRequest(ModelConnectionRequest):
+    model: str = Field(min_length=1, max_length=2_000)
+    reasoning_mode: str = Field(default="off", max_length=20)
+
+
+class ModelSelectionResponse(StrictModel):
+    backend: str
+    base_url: str
+    model: str
+    reasoning_mode: str
+    context_reset: bool
+
+
+class ModelLoadRequest(ModelConnectionRequest):
+    model: str = Field(min_length=1, max_length=2_000)
+    context_length: int | None = Field(default=None, ge=1, le=2_000_000)
+
+
+class ModelUnloadRequest(ModelConnectionRequest):
+    instance_id: str = Field(min_length=1, max_length=2_000)
+
+
+class ModelActionResponse(StrictModel):
+    status: str
+    instance_id: str | None = None
+    details: dict[str, Any]
+
+
 class AudioDeviceResponse(StrictModel):
     index: int
     name: str
@@ -371,6 +459,25 @@ class PersonalityMutationResponse(StrictModel):
     preset: PersonalityPresetResponse
     active_id: str
     applied_live: bool
+
+
+def _model_info_response(model: ModelInfo) -> ModelInfoResponse:
+    return ModelInfoResponse(**model.to_dict())
+
+
+def _model_discovery_response(discovery: ModelDiscovery) -> ModelDiscoveryResponse:
+    return ModelDiscoveryResponse(
+        backend=discovery.backend,
+        base_url=discovery.base_url,
+        api_url=discovery.api_url,
+        models=[_model_info_response(model) for model in discovery.models],
+    )
+
+
+def _close_model_client(client: ModelBackendClient) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
 
 
 def _preset_response(preset: PersonalityPreset) -> PersonalityPresetResponse:
@@ -540,6 +647,11 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         StaticFiles(directory=AUDIO_WEB_ROOT),
         name="audio-static",
     )
+    application.mount(
+        "/static/models",
+        StaticFiles(directory=MODELS_WEB_ROOT),
+        name="models-static",
+    )
 
     @application.get("/", include_in_schema=False)
     @application.get("/chat", include_in_schema=False)
@@ -588,6 +700,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
         return FileResponse(
             AUDIO_WEB_ROOT / "index.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/models", include_in_schema=False)
+    def models_page() -> FileResponse:
+        """Serve the local model/backend selector."""
+
+        return FileResponse(
+            MODELS_WEB_ROOT / "index.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
@@ -864,6 +986,182 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
             changed=changed,
             is_listening=service.is_listening,
             is_running=service.is_running,
+        )
+
+    @application.get(
+        "/api/models/config",
+        response_model=ModelConfigResponse,
+        tags=["models"],
+    )
+    def model_configuration(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelConfigResponse:
+        llm = get_settings().llm
+        return ModelConfigResponse(
+            backend=llm.backend,
+            base_url=llm.base_url,
+            api_key="" if str(llm.api_key or "").casefold() == "none" else llm.api_key,
+            model=llm.model,
+            reasoning_mode=llm.reasoning_mode,
+            service_loaded=active_runtime.service_loaded,
+        )
+
+    @application.post(
+        "/api/models/discover",
+        response_model=ModelDiscoveryResponse,
+        tags=["models"],
+    )
+    def discover_models(
+        payload: ModelConnectionRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelDiscoveryResponse:
+        client = active_runtime.create_model_backend_client()
+        try:
+            discovery = client.discover(
+                backend=payload.backend,
+                base_url=payload.base_url,
+                api_key=payload.api_key,
+            )
+        except ModelBackendError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        finally:
+            _close_model_client(client)
+        return _model_discovery_response(discovery)
+
+    @application.post(
+        "/api/models/select",
+        response_model=ModelSelectionResponse,
+        tags=["models"],
+    )
+    def select_model(
+        payload: ModelSelectionRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelSelectionResponse:
+        try:
+            backend = normalize_backend(payload.backend)
+            base_url = normalize_base_url(payload.base_url)
+        except ModelBackendError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        model_id = payload.model.strip()
+        if not model_id:
+            raise HTTPException(status_code=422, detail="Model ID cannot be blank.")
+
+        reasoning_mode = str(payload.reasoning_mode or "auto").strip().casefold()
+        if backend == "openai_compatible":
+            reasoning_mode = "auto"
+
+        changes = {
+            "llm": {
+                "backend": backend,
+                "base_url": base_url,
+                "api_key": payload.api_key.strip() or "None",
+                "model": model_id,
+                "reasoning_mode": reasoning_mode,
+            }
+        }
+        current = get_settings().to_dict()
+        try:
+            normalized = validate_settings_changes(changes, current)
+        except SettingsValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        updated = update_settings(normalized)
+        from ai.llm import invalidate_default_llm
+
+        context_reset = invalidate_default_llm()
+        active_runtime.events.publish(
+            "model.changed",
+            {
+                "backend": updated.llm.backend,
+                "base_url": updated.llm.base_url,
+                "model": updated.llm.model,
+                "reasoning_mode": updated.llm.reasoning_mode,
+                "context_reset": context_reset,
+            },
+        )
+        return ModelSelectionResponse(
+            backend=updated.llm.backend,
+            base_url=updated.llm.base_url,
+            model=updated.llm.model,
+            reasoning_mode=updated.llm.reasoning_mode,
+            context_reset=context_reset,
+        )
+
+    @application.post(
+        "/api/models/load",
+        response_model=ModelActionResponse,
+        tags=["models"],
+    )
+    def load_model(
+        payload: ModelLoadRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelActionResponse:
+        try:
+            if normalize_backend(payload.backend) != "lm_studio":
+                raise ModelBackendError("Model loading is available only for LM Studio.")
+            client = active_runtime.create_model_backend_client()
+            try:
+                result = client.load_lm_studio_model(
+                    base_url=payload.base_url,
+                    api_key=payload.api_key,
+                    model=payload.model,
+                    context_length=payload.context_length,
+                )
+            finally:
+                _close_model_client(client)
+        except ModelBackendError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        active_runtime.events.publish(
+            "model.loaded",
+            {
+                "model": payload.model,
+                "instance_id": result.get("instance_id"),
+            },
+        )
+        return ModelActionResponse(
+            status=str(result.get("status") or "loaded"),
+            instance_id=(
+                str(result.get("instance_id"))
+                if result.get("instance_id") is not None
+                else None
+            ),
+            details=dict(result),
+        )
+
+    @application.post(
+        "/api/models/unload",
+        response_model=ModelActionResponse,
+        tags=["models"],
+    )
+    def unload_model(
+        payload: ModelUnloadRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelActionResponse:
+        try:
+            if normalize_backend(payload.backend) != "lm_studio":
+                raise ModelBackendError("Model unloading is available only for LM Studio.")
+            client = active_runtime.create_model_backend_client()
+            try:
+                result = client.unload_lm_studio_model(
+                    base_url=payload.base_url,
+                    api_key=payload.api_key,
+                    instance_id=payload.instance_id,
+                )
+            finally:
+                _close_model_client(client)
+        except ModelBackendError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        active_runtime.events.publish(
+            "model.unloaded",
+            {"instance_id": payload.instance_id},
+        )
+        return ModelActionResponse(
+            status="unloaded",
+            instance_id=payload.instance_id,
+            details=dict(result),
         )
 
     @application.get(

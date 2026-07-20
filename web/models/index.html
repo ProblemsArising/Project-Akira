@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Models · Project Akira</title>
+  <link rel="stylesheet" href="/static/models/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div>
+          <h1>Project Akira</h1>
+          <p>Local AI companion</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <nav class="topnav" aria-label="Primary navigation">
+          <a href="/">Chat</a>
+          <a href="/history">History</a>
+          <a href="/personalities">Personalities</a>
+          <a class="active" href="/models">Models</a>
+          <a href="/audio">Audio</a>
+          <a href="/settings">Settings</a>
+        </nav>
+        <span id="connectionBadge" class="connection-badge offline">
+          <span class="connection-dot"></span>
+          <span id="connectionText">Not tested</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="models-layout">
+      <section class="hero-card">
+        <div>
+          <p class="eyebrow">Language model</p>
+          <h2>Choose Akira’s brain</h2>
+          <p class="hero-copy">Connect to LM Studio or another OpenAI-compatible local server, inspect available models, and select the one Akira should use.</p>
+        </div>
+        <div class="hero-state">
+          <span>Active model</span>
+          <strong id="activeModelLabel">Loading…</strong>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" hidden>
+        <div>
+          <strong id="noticeTitle"></strong>
+          <p id="noticeText"></p>
+        </div>
+        <button id="dismissNotice" type="button" aria-label="Dismiss">×</button>
+      </div>
+
+      <div class="content-grid">
+        <aside class="connection-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">Connection</p>
+              <h3>Backend</h3>
+            </div>
+            <span id="saveState" class="save-state">Loading</span>
+          </div>
+
+          <div class="backend-options" role="radiogroup" aria-label="LLM backend">
+            <button class="backend-option selected" type="button" data-backend="lm_studio" role="radio" aria-checked="true">
+              <span class="backend-icon">LM</span>
+              <span><strong>LM Studio</strong><small>Native model discovery, reasoning control, load and unload.</small></span>
+            </button>
+            <button class="backend-option" type="button" data-backend="openai_compatible" role="radio" aria-checked="false">
+              <span class="backend-icon generic">API</span>
+              <span><strong>OpenAI-compatible</strong><small>Ollama, llama.cpp, or another compatible local server.</small></span>
+            </button>
+          </div>
+
+          <label class="field">
+            <span>Server URL</span>
+            <input id="baseUrlInput" type="url" spellcheck="false" autocomplete="off" placeholder="http://localhost:1234/v1">
+            <small id="baseUrlHint">LM Studio normally uses http://localhost:1234/v1.</small>
+          </label>
+
+          <label class="field">
+            <span>API key <em>optional</em></span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="No key required by default">
+          </label>
+
+          <label class="field">
+            <span>Reasoning</span>
+            <select id="reasoningSelect">
+              <option value="off">Off — fastest conversation</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="on">On</option>
+              <option value="auto">Auto / compatibility mode</option>
+            </select>
+            <small id="reasoningHint">LM Studio native chat enforces this setting.</small>
+          </label>
+
+          <div class="connection-actions">
+            <button id="testButton" class="button secondary" type="button">Test & refresh</button>
+            <button id="saveButton" class="button primary" type="button" disabled>Save selection</button>
+          </div>
+        </aside>
+
+        <section class="catalog-card">
+          <div class="catalog-heading">
+            <div>
+              <p class="eyebrow">Available locally</p>
+              <h3>Models</h3>
+              <p id="catalogSummary">Test the connection to list models.</p>
+            </div>
+            <label class="search-box">
+              <span class="search-icon" aria-hidden="true"></span>
+              <input id="searchInput" type="search" placeholder="Search models…" autocomplete="off">
+            </label>
+          </div>
+
+          <div class="selected-model-row">
+            <label class="field model-id-field">
+              <span>Selected model ID</span>
+              <input id="modelInput" spellcheck="false" autocomplete="off" placeholder="Select a model or enter its ID">
+            </label>
+            <label id="contextField" class="field context-field">
+              <span>Load context <em>optional</em></span>
+              <input id="contextInput" type="number" min="1" max="2000000" placeholder="Model default">
+            </label>
+          </div>
+
+          <div id="catalogStatus" class="catalog-status">
+            <div class="empty-icon">◫</div>
+            <strong>No model list yet</strong>
+            <p>Start LM Studio’s local server, then click Test & refresh.</p>
+          </div>
+          <div id="modelList" class="model-list" role="listbox" aria-label="Available models"></div>
+
+          <div id="modelDetails" class="model-details" hidden>
+            <div class="details-main">
+              <div class="details-title-line">
+                <h3 id="detailsName"></h3>
+                <span id="loadedBadge" class="badge loaded" hidden>Loaded</span>
+                <span id="activeBadge" class="badge active" hidden>Active</span>
+              </div>
+              <code id="detailsId"></code>
+              <p id="detailsDescription"></p>
+              <div id="detailsFacts" class="details-facts"></div>
+            </div>
+            <div id="lmStudioActions" class="model-actions">
+              <button id="loadButton" class="button secondary" type="button">Load in LM Studio</button>
+              <button id="unloadButton" class="button danger" type="button" hidden>Unload</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <template id="modelTemplate">
+    <button class="model-card" type="button" role="option">
+      <span class="model-card-top">
+        <strong class="model-name"></strong>
+        <span class="model-badges"></span>
+      </span>
+      <code class="model-id"></code>
+      <span class="model-meta"></span>
+    </button>
+  </template>
+
+  <script src="/static/models/app.js" defer></script>
+</body>
+</html>

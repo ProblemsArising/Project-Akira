@@ -18,10 +18,10 @@
     "general.avatar_always_on_top": { label: "Avatar always on top" },
     "general.remember_window_positions": { label: "Remember window positions" },
 
-    "llm.backend": { label: "Backend", advanced: true },
+    "llm.backend": { label: "Backend", description: "Use the Models page for discovery and selection.", options: ["lm_studio", "openai_compatible"], advanced: true },
     "llm.base_url": { label: "Server URL", description: "LM Studio server address. Project Akira derives the native API endpoint automatically.", fullWidth: true },
     "llm.api_key": { label: "API key", inputType: "password", advanced: true },
-    "llm.model": { label: "Model name", description: "Must match the model identifier exposed by the server.", fullWidth: true },
+    "llm.model": { label: "Model name", description: "Managed from the Models page, or enter an exact server model identifier.", fullWidth: true },
     "llm.temperature": { label: "Temperature", description: "Higher values make replies more varied.", min: 0, max: 2, step: 0.05 },
     "llm.top_p": { label: "Top P", min: 0, max: 1, step: 0.05 },
     "llm.max_tokens": { label: "Maximum output tokens", description: "Includes hidden reasoning tokens for compatible models.", min: 1, max: 32768, step: 1 },
