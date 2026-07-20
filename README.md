@@ -1,152 +1,302 @@
-# Project-Akira
-Local AI companion
+# Project Akira
 
-## Set Up:
-Python 3.10.11 was used creating this project, I recommend this version for compatability.  
-pip install -r requirements.txt
-  
-### Basic tts only
-Download LM Studio and set up a local server  
-IF Needed, make api key and put it llm.py  
-run the project assistant.py  
+[![Latest release](https://img.shields.io/github/v/release/ProblemsArising/Project-Akira?display_name=tag&sort=semver)](https://github.com/ProblemsArising/Project-Akira/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4)](https://github.com/ProblemsArising/Project-Akira/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.10-3776AB)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/ProblemsArising/Project-Akira)](LICENSE)
 
+**Project Akira is a local-first Windows AI companion with text and voice chat, persistent conversations, customizable personalities, audio controls, and optional avatar integration.**
 
+Akira combines a FastAPI backend, browser-based interface, native desktop windows, local speech transcription, text-to-speech, and configurable language-model backends in one application.
 
-### Configuration
+> [!NOTE]
+> Project Akira is under active development. Version 0.3 establishes the installable Windows desktop application. The next milestone focuses on a built-in avatar renderer.
 
-Project Akira creates `data/settings.json` automatically. LLM, personality,
-Whisper, microphone/VAD, TTS, avatar, and memory values can be changed there
-without editing Python source.
+## Features
 
-```powershell
-python -m config.settings
+### Desktop application
+
+- Native Windows launcher
+- Main interface and separate avatar window
+- System tray controls
+- Saved window size and position
+- Optional launch at Windows startup
+- Per-user Windows installer and uninstaller
+- Start menu shortcut and optional desktop shortcut
+
+### Chat and customization
+
+- Text and microphone conversation
+- Streaming status updates
+- SQLite conversation history
+- Conversation search, rename, resume, and deletion
+- Built-in and custom personality presets
+- Persistent settings and memory
+- Configurable reply speech
+
+### Models and audio
+
+- LM Studio integration
+- OpenAI-compatible API support
+- Model discovery, selection, loading, and unloading
+- Faster-Whisper speech-to-text
+- Microphone voice-activity detection and calibration
+- Selectable input and output devices
+- Local `pyttsx3` text-to-speech
+
+### Avatar integration
+
+- Optional VMC output
+- VSeeFace-compatible avatar control
+- Speech-driven mouth movement
+- Text-selected facial expressions
+- Separate avatar display window
+
+A built-in VRM renderer is planned for v0.4. Until then, full animated-avatar rendering requires an external VMC-compatible application such as VSeeFace.
+
+## Download and install
+
+Download the latest Windows installer from the [Releases page](https://github.com/ProblemsArising/Project-Akira/releases/latest):
+
+```text
+ProjectAkira-Setup-<version>.exe
 ```
 
-See [`docs/runtime_settings.md`](docs/runtime_settings.md) for examples.
+Run the installer and launch **Project Akira** from the Start menu or the optional desktop shortcut.
 
-### Text chat
+Project Akira installs for the current Windows user and does not require administrator privileges.
 
-Use interactive typed chat instead of microphone input:
+> [!WARNING]
+> Current release installers are not digitally signed. Windows SmartScreen may show an **Unknown publisher** warning.
+
+## Requirements
+
+### Installed release
+
+- Windows 10 or Windows 11, 64-bit
+- A configured language-model backend
+  - LM Studio is currently the easiest local option
+  - An OpenAI-compatible endpoint may also be used
+- Audio input/output devices for voice features
+- A VMC-compatible avatar application for external avatar rendering
+
+An NVIDIA GPU is optional. GPU acceleration can improve local model and transcription performance, but available behavior depends on the selected backend and installed drivers.
+
+### Source development
+
+- Python 3.10
+- Git
+- A working C/C++ runtime for native Python dependencies
+- Inno Setup 7 only when building the Windows installer
+
+Python 3.10.11 is the primary development version used by this project.
+
+## First-time setup
+
+1. Install and open LM Studio or configure another compatible model backend.
+2. Load a chat model and start its local server.
+3. Launch Project Akira.
+4. Open **Models** and select the backend and model.
+5. Open **Audio** to choose and test microphone and output devices.
+6. Adjust personality, speech, avatar, and memory options under **Settings**.
+7. Open **Chat** and send a message.
+
+Voice, avatar, and speech output can each be disabled independently.
+
+## Local data and privacy
+
+Packaged releases store user data at:
+
+```text
+%LOCALAPPDATA%\Project Akira\Data
+```
+
+This directory contains settings, personalities, conversation history, memory, and other runtime data. Uninstalling Project Akira preserves it so data can survive upgrades and reinstalls.
+
+Source checkouts use the repository's `data` directory unless another data directory is explicitly configured.
+
+Project Akira is designed for local use and does not require a cloud service by itself. When connected to a local backend, prompts and replies remain on the local machine. Configuring a remote OpenAI-compatible endpoint sends requests to that endpoint according to its own privacy policy.
+
+## Run from source
+
+Clone the repository and create a Python 3.10 virtual environment:
+
+```powershell
+git clone https://github.com/ProblemsArising/Project-Akira.git
+cd Project-Akira
+
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Launch the desktop application:
+
+```powershell
+python desktop.py
+```
+
+### Command-line modes
+
+Start the continuous microphone conversation loop:
+
+```powershell
+python assistant.py
+```
+
+Use interactive text chat:
 
 ```powershell
 python assistant.py --text
 ```
 
-Send one typed message and exit:
+Send one message and exit:
 
 ```powershell
 python assistant.py --message "Hello, Akira"
 ```
 
-### Listening controls
-
-Open temporary terminal controls for starting, stopping, and checking the
-microphone listener:
+Disable spoken replies in text mode:
 
 ```powershell
-python assistant.py --controls
+python assistant.py --text --no-speak
 ```
 
-Use `start`, `stop`, `status`, or `quit`. These commands exercise the same
-background listening API that the future WebUI will use.
-
-Add `--no-speak` to either command to disable TTS for typed replies.
-
-### Audio devices
-
-List available microphones and output devices:
+Run the backend directly for WebUI development:
 
 ```powershell
-python assistant.py --devices
+python server.py --reload
 ```
 
-Select devices by index or unique name, then optionally test output:
+The development server defaults to:
+
+```text
+http://127.0.0.1:8000
+```
+
+## Tests
+
+Run the complete unit-test suite:
 
 ```powershell
-python assistant.py --set-input-device 3
-python assistant.py --set-output-device "CABLE Input"
-python assistant.py --test-output
+python -m unittest discover -s tests -v
 ```
 
-Use `default` to restore normal Windows default routing. See
-[`docs/audio_devices.md`](docs/audio_devices.md) for details.
+Run a single test module:
 
-### Add Voice Changer
-Download Virtual Audio Cable  
-Download https://github.com/w-okada/voice-changer  
-run the project assistant.py, in windows audio settings, change python audio output to vb cable in  
-in the voice changer, select vb cable out as audio source and set processing delay to 500ms.  
-add voice changer profile if wanted.  
+```powershell
+python -m unittest tests.test_conversation -v
+```
 
-### Add animated model
-Download VSeeFace and find or make vrm model. You can make a vrm model with vroid studio, it is free  
-open VseeFace and import model and start  
-go to settings and change osc/vmc reciever on  
-Start assistant.py  
-  
+## Build the Windows application
 
-## Base Project completed as v0
-## Application Foundation completed as v0.1
-  
-## Development Roadmap
+Install the build dependencies:
 
-### v0.1 — Application Foundation
+```powershell
+python -m pip install -r requirements-build.txt
+```
 
-- [x] Central settings system
-- [x] Reusable conversation service
-- [x] SQLite chat history
-- [x] Text-message support
-- [x] Start/stop listening controls
-- [x] Audio-device selection
+Create a diagnostic build with a visible console:
 
-### v0.2 — WebUI
+```powershell
+python build_windows.py --console
+```
 
-- [ ] Chat interface
-- [ ] Settings interface
-- [ ] Conversation history viewer
-- [ ] Personality editor
-- [ ] Model and device selectors
-- [ ] Live status updates
+Create the normal windowed build:
 
-### v0.3 — Desktop Application
+```powershell
+python build_windows.py
+```
 
-- [ ] One-click Windows launcher
-- [ ] Separate avatar window
-- [ ] System tray support
-- [ ] Remember window positions
-- [ ] Optional launch on startup
-- [ ] Windows installer
+The PyInstaller distribution is written to:
 
-### v0.4 — Built-in Avatar
+```text
+dist\ProjectAkira
+```
 
-- [ ] Embedded VRM renderer
-- [ ] Mouth visemes
-- [ ] Facial expressions
-- [ ] Idle animation
-- [ ] Body poses
-- [ ] Optional VMC compatibility
+## Build the Windows installer
 
-### v0.5 — Built-in LLM
+Install Inno Setup 7, then run:
 
-- [ ] LLM backend interface
-- [ ] LM Studio support
-- [ ] Managed llama.cpp backend
-- [ ] Model downloader
-- [ ] Hardware presets
+```powershell
+python build_installer.py --version 0.3.0
+```
 
-### v0.6 — Built-in Voice Conversion
+The installer is written to:
 
-- [ ] TTS audio generation
-- [ ] Internal RVC inference
-- [ ] Direct audio playback
-- [ ] Audio-driven lip sync
-- [ ] Remove VB-CABLE dependency
+```text
+dist\installer\ProjectAkira-Setup-0.3.0.exe
+```
 
-### v0.7 — Minecraft Integration
+To package an already tested PyInstaller distribution:
 
-- [ ] Connect second account
-- [ ] Follow and wait commands
-- [ ] Basic navigation
-- [ ] Resource collection
-- [ ] In-game chat
-- [ ] LLM action planning
+```powershell
+python build_installer.py --version 0.3.0 --skip-app-build
+```
+
+See the files under [`docs`](docs/) for detailed configuration, audio, packaging, and installer notes.
+
+## Project structure
+
+```text
+Project-Akira/
+├── ai/                 LLM, personality, and memory components
+├── app/                Conversation service, API, desktop, tray, and history
+├── audio/              Recording, VAD, transcription, and TTS
+├── avatar/             VMC avatar controller and expression logic
+├── config/             Persistent runtime settings
+├── data/               Source-development runtime data
+├── docs/               Configuration and build documentation
+├── tests/              Unit and integration tests
+├── web/                Chat, settings, history, model, audio, and avatar UI
+├── assistant.py        Command-line launcher
+├── desktop.py          Native desktop launcher
+├── server.py           FastAPI development server
+├── build_windows.py    PyInstaller build script
+└── build_installer.py  Inno Setup installer build script
+```
+
+## Roadmap
+
+| Version | Milestone | Status |
+| --- | --- | --- |
+| v0.1 | Application foundation | Complete |
+| v0.2 | WebUI | Complete |
+| v0.3 | Desktop application | Complete |
+| v0.4 | Built-in avatar | Next |
+| v0.5 | Built-in LLM | Planned |
+| v0.6 | Built-in voice conversion | Planned |
+| v0.7 | Minecraft integration | Planned |
+
+Development is tracked through [GitHub issues](https://github.com/ProblemsArising/Project-Akira/issues) and [milestones](https://github.com/ProblemsArising/Project-Akira/milestones).
+
+## Current limitations
+
+- The Windows installer is currently unsigned.
+- A language model is not bundled with v0.3.
+- The built-in avatar renderer is not yet implemented.
+- External avatar rendering currently requires VMC-compatible software.
+- Windows is the primary supported desktop platform.
+- Model, Whisper, and voice performance depends heavily on local hardware.
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+Before submitting a change:
+
+1. Create a focused branch.
+2. Add or update tests where practical.
+3. Run the complete test suite.
+4. Keep commits scoped to one issue or feature.
+5. Reference the related issue in the pull request.
+
+Bug reports should include the Project Akira version, Windows version, backend, relevant settings, and the complete error message or traceback.
+
+## License
+
+Project Akira is licensed under the [Apache License 2.0](LICENSE).
+
+See [`NOTICE`](NOTICE) for project attribution information.
