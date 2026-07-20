@@ -25,6 +25,8 @@ CURRENT_SCHEMA_VERSION = 3
 @dataclass
 class GeneralSettings:
     launch_on_startup: bool = False
+    system_tray_enabled: bool = True
+    close_to_tray: bool = True
     open_avatar_window: bool = True
     avatar_always_on_top: bool = False
     remember_window_positions: bool = True
