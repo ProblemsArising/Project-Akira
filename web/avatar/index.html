@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Akira</title>
+  <link rel="stylesheet" href="/static/avatar/styles.css">
+</head>
+<body data-state="idle">
+  <main class="stage" aria-live="polite">
+    <header class="stage-header">
+      <div>
+        <span class="eyebrow">PROJECT AKIRA</span>
+        <h1>Akira</h1>
+      </div>
+      <span id="connectionBadge" class="connection-badge offline">
+        <span class="connection-dot"></span>
+        <span id="connectionText">Connecting</span>
+      </span>
+    </header>
+
+    <section class="avatar-space" aria-label="Avatar stage">
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+      <div class="pulse-ring ring-one"></div>
+      <div class="pulse-ring ring-two"></div>
+
+      <div id="avatarCore" class="avatar-core" aria-hidden="true">
+        <div class="ear ear-left"></div>
+        <div class="ear ear-right"></div>
+        <div class="face">
+          <div class="eyes">
+            <span class="eye"></span>
+            <span class="eye"></span>
+          </div>
+          <div class="mouth"><span></span></div>
+        </div>
+      </div>
+
+      <div class="state-copy">
+        <span id="stateLabel" class="state-label">Ready</span>
+        <p id="stateDetail">Waiting for your next message.</p>
+      </div>
+    </section>
+
+    <footer class="stage-footer">
+      <div class="status-row">
+        <span class="status-key">Mode</span>
+        <span id="modeText">Avatar stage</span>
+      </div>
+      <div class="status-row">
+        <span class="status-key">Renderer</span>
+        <span>VMC / future embedded VRM</span>
+      </div>
+    </footer>
+  </main>
+
+  <script src="/static/avatar/app.js" defer></script>
+</body>
+</html>
