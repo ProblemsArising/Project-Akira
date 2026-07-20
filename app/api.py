@@ -48,6 +48,7 @@ from app.personalities import (
     PersonalityStoreError,
     get_personality_store,
 )
+from app.startup import StartupRegistrationError, get_startup_manager
 from config.settings import get_settings, reset_settings, update_settings
 from config.settings_validation import SettingsValidationError, validate_settings_changes
 
@@ -335,6 +336,15 @@ class SettingsMutationResponse(StrictModel):
     settings: dict[str, Any]
     changed_sections: list[str]
     restart_required: bool
+
+
+class StartupStatusResponse(StrictModel):
+    supported: bool
+    enabled: bool
+    registered_command: str | None
+    expected_command: str
+    matches_current: bool
+
 
 class ModelConfigResponse(StrictModel):
     backend: str
@@ -1549,6 +1559,20 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
                     request_stop()
 
     @application.get(
+        "/api/startup",
+        response_model=StartupStatusResponse,
+        tags=["settings"],
+    )
+    def startup_status() -> StartupStatusResponse:
+        """Return the real Windows startup-registration state."""
+
+        try:
+            state = get_startup_manager().status()
+        except StartupRegistrationError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return StartupStatusResponse(**state.to_dict())
+
+    @application.get(
         "/api/settings",
         response_model=SettingsResponse,
         tags=["settings"],
@@ -1571,16 +1595,44 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         except SettingsValidationError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-        updated = update_settings(normalized)
+        startup_general = normalized.get("general", {})
+        startup_requested = "launch_on_startup" in startup_general
+        previous_startup = bool(
+            current.get("general", {}).get("launch_on_startup", False)
+        )
+        startup_state = None
+
+        if startup_requested:
+            try:
+                startup_state = get_startup_manager().set_enabled(
+                    bool(startup_general["launch_on_startup"])
+                )
+            except StartupRegistrationError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+
+        try:
+            updated = update_settings(normalized)
+        except Exception:
+            if startup_requested:
+                try:
+                    get_startup_manager().set_enabled(previous_startup)
+                except StartupRegistrationError:
+                    pass
+            raise
+
         changed_sections = sorted(normalized)
         restart_required = active_runtime.service_loaded
-        active_runtime.events.publish(
-            "settings.updated",
-            {
-                "changed_sections": changed_sections,
-                "restart_required": restart_required,
-            },
-        )
+        event_data: dict[str, Any] = {
+            "changed_sections": changed_sections,
+            "restart_required": restart_required,
+        }
+        if startup_state is not None:
+            event_data["startup"] = startup_state.to_dict()
+            active_runtime.events.publish(
+                "startup.changed",
+                startup_state.to_dict(),
+            )
+        active_runtime.events.publish("settings.updated", event_data)
         return SettingsMutationResponse(
             settings=updated.to_dict(),
             changed_sections=changed_sections,
@@ -1595,7 +1647,22 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     def restore_default_settings(
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> SettingsMutationResponse:
-        defaults = reset_settings()
+        previous_startup = bool(get_settings().general.launch_on_startup)
+        try:
+            startup_state = get_startup_manager().set_enabled(False)
+        except StartupRegistrationError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        try:
+            defaults = reset_settings()
+        except Exception:
+            if previous_startup:
+                try:
+                    get_startup_manager().set_enabled(True)
+                except StartupRegistrationError:
+                    pass
+            raise
+
         changed_sections = [
             "general",
             "llm",
@@ -1608,11 +1675,16 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
         ]
         restart_required = active_runtime.service_loaded
         active_runtime.events.publish(
+            "startup.changed",
+            startup_state.to_dict(),
+        )
+        active_runtime.events.publish(
             "settings.updated",
             {
                 "changed_sections": changed_sections,
                 "restart_required": restart_required,
                 "reset": True,
+                "startup": startup_state.to_dict(),
             },
         )
         return SettingsMutationResponse(
