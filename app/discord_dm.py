@@ -2,23 +2,24 @@
 
 Only one-to-one direct messages from users accepted by ``DiscordAccessPolicy``
 reach the local conversation pipeline. Server messages, bots, blank messages,
-and unauthorized users are ignored without a response.
-
-Issue #71 replaces the temporary shared conversation service with per-user
-Discord sessions.
+and unauthorized users are ignored without a response. Authorized users are
+routed to independent saved conversations through ``DiscordConversationSessions``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import threading
-
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncIterator, Callable, Protocol
 
 from app.discord_access import DiscordAccessPolicy, get_discord_access_policy
+from app.discord_conversations import (
+    DiscordConversationSessions,
+    get_discord_conversation_sessions,
+)
 
 
 DISCORD_MESSAGE_LIMIT = 2_000
@@ -94,15 +95,6 @@ def split_discord_message(
     return tuple(parts)
 
 
-def _default_conversation_service() -> ConversationServiceLike:
-    from app.conversation import ConversationService
-
-    return ConversationService.from_text_components(
-        enable_speech=False,
-        on_reply=None,
-    )
-
-
 @asynccontextmanager
 async def _typing_indicator(channel: Any) -> AsyncIterator[None]:
     typing = getattr(channel, "typing", None)
@@ -123,23 +115,28 @@ class DiscordDMHandler:
         *,
         access_policy: DiscordAccessPolicy | None = None,
         service_factory: ConversationServiceFactory | None = None,
+        conversation_sessions: DiscordConversationSessions | None = None,
         failure_reply: str = DEFAULT_FAILURE_REPLY,
     ) -> None:
         normalized_failure = str(failure_reply).strip()
         if not normalized_failure:
             raise ValueError("Discord failure reply cannot be blank")
 
-        self._access_policy = access_policy or get_discord_access_policy()
-        self._service_factory = service_factory or _default_conversation_service
-        self._failure_reply = normalized_failure
-        self._service: ConversationServiceLike | None = None
-        self._service_lock = threading.Lock()
+        if service_factory is not None and conversation_sessions is not None:
+            raise ValueError(
+                "Pass either service_factory or conversation_sessions, not both"
+            )
 
-    def _conversation_service(self) -> ConversationServiceLike:
-        with self._service_lock:
-            if self._service is None:
-                self._service = self._service_factory()
-            return self._service
+        self._access_policy = access_policy or get_discord_access_policy()
+        if conversation_sessions is not None:
+            self._conversation_sessions = conversation_sessions
+        elif service_factory is not None:
+            self._conversation_sessions = DiscordConversationSessions(
+                service_factory=lambda user_id: service_factory(),
+            )
+        else:
+            self._conversation_sessions = get_discord_conversation_sessions()
+        self._failure_reply = normalized_failure
 
     async def handle_message(self, message: Any) -> DiscordDMResult:
         if getattr(message, "guild", None) is not None:
@@ -163,9 +160,9 @@ class DiscordDMHandler:
 
         try:
             async with _typing_indicator(channel):
-                service = self._conversation_service()
                 result = await asyncio.to_thread(
-                    service.process_text,
+                    self._conversation_sessions.process_text,
+                    author,
                     content,
                     speak=False,
                     source="text",
