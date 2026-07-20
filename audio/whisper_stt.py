@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from app.paths import BUNDLE_ROOT
 from config.settings import AppSettings, get_settings
 
 AUDIO_FILE = "input.wav"
@@ -28,16 +29,26 @@ def add_cuda_dll_dirs() -> None:
 
         site_packages = Path(sys.prefix) / "Lib" / "site-packages"
         dll_dirs = [
+            # Source/virtual-environment locations.
             site_packages / "nvidia" / "cublas" / "bin",
             site_packages / "nvidia" / "cudnn" / "bin",
             site_packages / "nvidia" / "cuda_runtime" / "bin",
             site_packages / "torch" / "lib",
             site_packages / "~orch" / "lib",
+            # PyInstaller one-folder locations.
+            BUNDLE_ROOT,
+            BUNDLE_ROOT / "nvidia" / "cublas" / "bin",
+            BUNDLE_ROOT / "nvidia" / "cudnn" / "bin",
+            BUNDLE_ROOT / "nvidia" / "cuda_runtime" / "bin",
+            BUNDLE_ROOT / "ctranslate2",
         ]
 
+        seen: set[Path] = set()
         for folder in dll_dirs:
-            if not folder.exists():
+            folder = folder.resolve()
+            if folder in seen or not folder.exists():
                 continue
+            seen.add(folder)
             if hasattr(os, "add_dll_directory"):
                 try:
                     _DLL_HANDLES.append(os.add_dll_directory(str(folder)))

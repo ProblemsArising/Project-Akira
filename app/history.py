@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Literal, cast
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_HISTORY_FILE = PROJECT_ROOT / "data" / "chat_history.db"
+from app.paths import USER_DATA_ROOT
+
+DEFAULT_HISTORY_FILE = USER_DATA_ROOT / "chat_history.db"
 HISTORY_ENV_VAR = "AKIRA_HISTORY_FILE"
 SCHEMA_VERSION = 1
 

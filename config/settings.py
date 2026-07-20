@@ -16,8 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, TypeVar
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SETTINGS_FILE = PROJECT_ROOT / "data" / "settings.json"
+from app.paths import PROJECT_ROOT, USER_DATA_ROOT
+
+DEFAULT_SETTINGS_FILE = USER_DATA_ROOT / "settings.json"
 SETTINGS_ENV_VAR = "AKIRA_SETTINGS_FILE"
 CURRENT_SCHEMA_VERSION = 3
 

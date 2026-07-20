@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from typing import Any, AsyncIterator, Callable, Mapping, Protocol
@@ -42,6 +41,7 @@ from app.model_backends import (
     normalize_backend,
     normalize_base_url,
 )
+from app.paths import resource_path, user_file_path
 from app.personalities import (
     PersonalityPreset,
     PersonalityStore,
@@ -53,15 +53,14 @@ from config.settings import get_settings, reset_settings, update_settings
 from config.settings_validation import SettingsValidationError, validate_settings_changes
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CHAT_WEB_ROOT = PROJECT_ROOT / "web" / "chat"
-SETTINGS_WEB_ROOT = PROJECT_ROOT / "web" / "settings"
-HISTORY_WEB_ROOT = PROJECT_ROOT / "web" / "history"
-PERSONALITIES_WEB_ROOT = PROJECT_ROOT / "web" / "personalities"
-AUDIO_WEB_ROOT = PROJECT_ROOT / "web" / "audio"
-MODELS_WEB_ROOT = PROJECT_ROOT / "web" / "models"
-AVATAR_WEB_ROOT = PROJECT_ROOT / "web" / "avatar"
-CALIBRATION_SAMPLE_PATH = PROJECT_ROOT / "data" / "calibration_sample.wav"
+CHAT_WEB_ROOT = resource_path("web", "chat")
+SETTINGS_WEB_ROOT = resource_path("web", "settings")
+HISTORY_WEB_ROOT = resource_path("web", "history")
+PERSONALITIES_WEB_ROOT = resource_path("web", "personalities")
+AUDIO_WEB_ROOT = resource_path("web", "audio")
+MODELS_WEB_ROOT = resource_path("web", "models")
+AVATAR_WEB_ROOT = resource_path("web", "avatar")
+CALIBRATION_SAMPLE_PATH = user_file_path("data/calibration_sample.wav")
 
 
 class ConversationServiceLike(Protocol):
