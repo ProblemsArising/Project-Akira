@@ -51,6 +51,7 @@ class AvatarPageTests(unittest.TestCase):
         renderer = self.client.get("/static/avatar/renderer.js")
         expressions = self.client.get("/static/avatar/expressions.js")
         visemes = self.client.get("/static/avatar/visemes.js")
+        idle = self.client.get("/static/avatar/idle.js")
         three = self.client.get(
             "/static/avatar/vendor/three/three.module.min.js"
         )
@@ -71,6 +72,8 @@ class AvatarPageTests(unittest.TestCase):
         self.assertIn("TextExpressionPlayer", expressions.text)
         self.assertEqual(visemes.status_code, 200)
         self.assertIn("TextVisemePlayer", visemes.text)
+        self.assertEqual(idle.status_code, 200)
+        self.assertIn("EmbeddedIdleMotion", idle.text)
         self.assertEqual(three.status_code, 200)
         self.assertEqual(three_vrm.status_code, 200)
         self.assertEqual(self.service_factory_calls, 0)

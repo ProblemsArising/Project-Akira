@@ -1,6 +1,7 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { GLTFLoader } from "./vendor/three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "./vendor/three-vrm/three-vrm.module.min.js";
+import { EmbeddedIdleMotion } from "./idle.js";
 
 const FACE_EXPRESSION_ALIASES = Object.freeze({
   happy: Object.freeze(["happy", "joy", "smile"]),
@@ -46,6 +47,10 @@ export class EmbeddedVRMRenderer {
     };
     this.mouthCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     this.mouthTarget = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    this.idleMotion = new EmbeddedIdleMotion();
+    this.idleRig = null;
+    this.idleEuler = new THREE.Euler(0, 0, 0, "XYZ");
+    this.idleQuaternion = new THREE.Quaternion();
 
     this.renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -76,6 +81,7 @@ export class EmbeddedVRMRenderer {
     this.renderer.setAnimationLoop(() => {
       const delta = Math.min(this.clock.getDelta(), 0.1);
       if (this.currentVrm) {
+        this._updateIdleMovement(delta);
         this._updateFace(delta);
         this._updateMouth(delta);
         this.currentVrm.update(delta);
@@ -122,6 +128,7 @@ export class EmbeddedVRMRenderer {
 
     VRMUtils.rotateVRM0(vrm);
     this.currentVrm = vrm;
+    this._captureIdleRig();
     this._refreshExpressionBindings();
     this.clearFaceExpression(true);
     this.closeMouth(true);
@@ -129,6 +136,100 @@ export class EmbeddedVRMRenderer {
     vrm.scene.updateMatrixWorld(true);
     this.frame(vrm.scene);
     return vrm;
+  }
+
+  configureIdle(settings = {}) {
+    this.idleMotion.configure(settings);
+  }
+
+  setSpeaking(speaking) {
+    this.idleMotion.setSpeaking(speaking);
+  }
+
+  getIdleCapabilities() {
+    if (!this.idleRig) return { enabled: false, bones: [] };
+    return {
+      enabled: this.idleMotion.settings.enabled,
+      bones: Object.keys(this.idleRig.bones),
+    };
+  }
+
+  _captureIdleRig() {
+    const vrm = this.currentVrm;
+    if (!vrm || !vrm.scene || !vrm.humanoid) {
+      this.idleRig = null;
+      return;
+    }
+
+    const boneNames = [
+      "hips",
+      "spine",
+      "chest",
+      "upperChest",
+      "neck",
+      "head",
+      "leftShoulder",
+      "rightShoulder",
+      "leftUpperArm",
+      "rightUpperArm",
+      "leftLowerArm",
+      "rightLowerArm",
+    ];
+    const bones = {};
+    for (const name of boneNames) {
+      const node = vrm.humanoid.getNormalizedBoneNode(name);
+      if (!node) continue;
+      bones[name] = {
+        node,
+        position: node.position.clone(),
+        quaternion: node.quaternion.clone(),
+      };
+    }
+
+    this.idleRig = {
+      root: {
+        node: vrm.scene,
+        position: vrm.scene.position.clone(),
+        quaternion: vrm.scene.quaternion.clone(),
+      },
+      bones,
+    };
+    this.idleMotion.reset();
+  }
+
+  _updateIdleMovement(delta) {
+    if (!this.idleRig) return;
+    const sample = this.idleMotion.update(delta);
+    const root = this.idleRig.root;
+    root.node.position.set(
+      root.position.x + sample.rootPosition.x,
+      root.position.y + sample.rootPosition.y,
+      root.position.z + sample.rootPosition.z,
+    );
+    root.node.quaternion.copy(root.quaternion);
+
+    for (const [name, binding] of Object.entries(this.idleRig.bones)) {
+      const offset = sample.bones[name];
+      if (!offset) continue;
+      binding.node.position.copy(binding.position);
+      this.idleEuler.set(offset.x, offset.y, offset.z, "XYZ");
+      this.idleQuaternion.setFromEuler(this.idleEuler);
+      binding.node.quaternion
+        .copy(binding.quaternion)
+        .multiply(this.idleQuaternion);
+    }
+  }
+
+  _resetIdleRig() {
+    if (!this.idleRig) return;
+    const root = this.idleRig.root;
+    root.node.position.copy(root.position);
+    root.node.quaternion.copy(root.quaternion);
+    for (const binding of Object.values(this.idleRig.bones)) {
+      binding.node.position.copy(binding.position);
+      binding.node.quaternion.copy(binding.quaternion);
+    }
+    this.idleMotion.reset();
   }
 
   configureFace(settings = {}) {
@@ -367,10 +468,15 @@ export class EmbeddedVRMRenderer {
     this.loadToken += 1;
     this.clearFaceExpression(true);
     this.closeMouth(true);
-    if (!this.currentVrm) return;
+    this._resetIdleRig();
+    if (!this.currentVrm) {
+      this.idleRig = null;
+      return;
+    }
     this.scene.remove(this.currentVrm.scene);
     VRMUtils.deepDispose(this.currentVrm.scene);
     this.currentVrm = null;
+    this.idleRig = null;
     this.faceBindings = {};
     this.mouthBindings = {};
   }
