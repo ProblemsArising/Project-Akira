@@ -23,6 +23,11 @@ def _configure_utf8_stream(stream: TextIO | None) -> None:
 _configure_utf8_stream(sys.stdout)
 _configure_utf8_stream(sys.stderr)
 
+from app.runtime_streams import configure_standard_streams
+
+# PyInstaller windowed mode may provide no stdout or stderr.
+configure_standard_streams()
+
 from app.desktop import main  # noqa: E402
 
 
