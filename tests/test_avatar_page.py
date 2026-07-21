@@ -49,6 +49,7 @@ class AvatarPageTests(unittest.TestCase):
         stylesheet = self.client.get("/static/avatar/styles.css")
         script = self.client.get("/static/avatar/app.js")
         renderer = self.client.get("/static/avatar/renderer.js")
+        expressions = self.client.get("/static/avatar/expressions.js")
         visemes = self.client.get("/static/avatar/visemes.js")
         three = self.client.get(
             "/static/avatar/vendor/three/three.module.min.js"
@@ -66,6 +67,8 @@ class AvatarPageTests(unittest.TestCase):
         self.assertIn("/api/events", script.text)
         self.assertEqual(renderer.status_code, 200)
         self.assertIn("VRMLoaderPlugin", renderer.text)
+        self.assertEqual(expressions.status_code, 200)
+        self.assertIn("TextExpressionPlayer", expressions.text)
         self.assertEqual(visemes.status_code, 200)
         self.assertIn("TextVisemePlayer", visemes.text)
         self.assertEqual(three.status_code, 200)

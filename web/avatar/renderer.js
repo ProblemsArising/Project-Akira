@@ -2,6 +2,22 @@ import * as THREE from "./vendor/three/three.module.min.js";
 import { GLTFLoader } from "./vendor/three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "./vendor/three-vrm/three-vrm.module.min.js";
 
+const FACE_EXPRESSION_ALIASES = Object.freeze({
+  happy: Object.freeze(["happy", "joy", "smile"]),
+  relaxed: Object.freeze(["relaxed", "fun"]),
+  sad: Object.freeze(["sad", "sorrow"]),
+  angry: Object.freeze(["angry"]),
+  surprised: Object.freeze(["surprised", "surprise"]),
+});
+
+const MOUTH_EXPRESSION_ALIASES = Object.freeze({
+  aa: Object.freeze(["aa", "a"]),
+  ih: Object.freeze(["ih", "i"]),
+  ou: Object.freeze(["ou", "u"]),
+  ee: Object.freeze(["ee", "e"]),
+  oh: Object.freeze(["oh", "o"]),
+});
+
 export class EmbeddedVRMRenderer {
   constructor(host) {
     if (!host) throw new Error("The embedded avatar renderer host is missing.");
@@ -13,6 +29,16 @@ export class EmbeddedVRMRenderer {
     this.currentVrm = null;
     this.loadToken = 0;
     this.clock = new THREE.Clock();
+    this.faceSettings = {
+      faceFps: 120,
+      fadeSpeed: 0.08,
+    };
+    this.faceIdle = { happy: 0.024, relaxed: 0.009, sad: 0, angry: 0, surprised: 0 };
+    this.faceCurrent = { ...this.faceIdle };
+    this.faceTarget = { ...this.faceIdle };
+    this.faceActive = false;
+    this.faceBindings = {};
+    this.mouthBindings = {};
     this.mouthSettings = {
       mouthFps: 28,
       attackSpeed: 0.60,
@@ -50,6 +76,7 @@ export class EmbeddedVRMRenderer {
     this.renderer.setAnimationLoop(() => {
       const delta = Math.min(this.clock.getDelta(), 0.1);
       if (this.currentVrm) {
+        this._updateFace(delta);
         this._updateMouth(delta);
         this.currentVrm.update(delta);
       }
@@ -95,11 +122,163 @@ export class EmbeddedVRMRenderer {
 
     VRMUtils.rotateVRM0(vrm);
     this.currentVrm = vrm;
+    this._refreshExpressionBindings();
+    this.clearFaceExpression(true);
     this.closeMouth(true);
     this.scene.add(vrm.scene);
     vrm.scene.updateMatrixWorld(true);
     this.frame(vrm.scene);
     return vrm;
+  }
+
+  configureFace(settings = {}) {
+    const fps = Number(settings.faceFps ?? settings.face_blend_fps);
+    const fade = Number(settings.fadeSpeed ?? settings.expression_fade_speed);
+    const idle = settings.idle && typeof settings.idle === "object"
+      ? settings.idle
+      : null;
+
+    if (Number.isFinite(fps)) {
+      this.faceSettings.faceFps = Math.max(1, Math.min(240, fps));
+    }
+    if (Number.isFinite(fade)) {
+      this.faceSettings.fadeSpeed = Math.max(0, Math.min(1, fade));
+    }
+    if (idle) {
+      for (const name of Object.keys(this.faceIdle)) {
+        const value = Number(idle[name]);
+        this.faceIdle[name] = Number.isFinite(value)
+          ? Math.max(0, Math.min(1, value))
+          : 0;
+      }
+      if (!this.faceActive) this.clearFaceExpression();
+    }
+  }
+
+  setFaceExpression(blends = {}) {
+    this.faceActive = true;
+    for (const name of Object.keys(this.faceTarget)) {
+      const value = Number(blends[name]);
+      this.faceTarget[name] = Number.isFinite(value)
+        ? Math.max(0, Math.min(1, value))
+        : 0;
+    }
+    return Boolean(this.currentVrm && this.currentVrm.expressionManager);
+  }
+
+  clearFaceExpression(immediate = false) {
+    this.faceActive = false;
+    this.faceTarget = { ...this.faceIdle };
+    if (immediate) {
+      this.faceCurrent = { ...this.faceTarget };
+      this._applyFaceValues();
+    }
+  }
+
+
+  _updateFace(delta) {
+    const frameScale = Math.max(0.05, delta * this.faceSettings.faceFps);
+    const speed = 1 - Math.pow(1 - this.faceSettings.fadeSpeed, frameScale);
+
+    for (const name of Object.keys(this.faceCurrent)) {
+      const current = this.faceCurrent[name];
+      const target = this.faceTarget[name];
+      this.faceCurrent[name] = current + (target - current) * speed;
+    }
+    this._applyFaceValues();
+  }
+
+  _expressionNameLookup(manager) {
+    const lookup = new Map();
+    const expressionMap = manager && manager.expressionMap;
+    if (!expressionMap || typeof expressionMap !== "object") return lookup;
+
+    for (const name of Object.keys(expressionMap)) {
+      lookup.set(String(name).toLowerCase(), name);
+    }
+    return lookup;
+  }
+
+  _resolveExpressionBindings(manager, aliases) {
+    const lookup = this._expressionNameLookup(manager);
+    const result = {};
+
+    for (const [logicalName, candidates] of Object.entries(aliases)) {
+      result[logicalName] = null;
+      for (const candidate of candidates) {
+        const exact = manager.getExpression(candidate);
+        if (exact) {
+          result[logicalName] = candidate;
+          break;
+        }
+        const actualName = lookup.get(candidate.toLowerCase());
+        if (actualName && manager.getExpression(actualName)) {
+          result[logicalName] = actualName;
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
+  _refreshExpressionBindings() {
+    const manager = this.currentVrm && this.currentVrm.expressionManager;
+    if (!manager) {
+      this.faceBindings = {};
+      this.mouthBindings = {};
+      return;
+    }
+
+    this.faceBindings = this._resolveExpressionBindings(
+      manager,
+      FACE_EXPRESSION_ALIASES,
+    );
+    this.mouthBindings = this._resolveExpressionBindings(
+      manager,
+      MOUTH_EXPRESSION_ALIASES,
+    );
+  }
+
+  _expressionWeight(manager, name, value) {
+    const expression = name ? manager.getExpression(name) : null;
+    if (!expression) return 0;
+    const normalized = Math.max(0, Math.min(1, Number(value) || 0));
+    if (expression.isBinary) return normalized > 0.08 ? 1 : 0;
+    return normalized;
+  }
+
+  _applyBoundValues(manager, currentValues, bindings) {
+    const valuesByExpression = new Map();
+
+    for (const [logicalName, value] of Object.entries(currentValues)) {
+      const actualName = bindings[logicalName];
+      if (!actualName) continue;
+      const previous = valuesByExpression.get(actualName) || 0;
+      valuesByExpression.set(actualName, Math.max(previous, value));
+    }
+
+    for (const [actualName, value] of valuesByExpression.entries()) {
+      manager.setValue(
+        actualName,
+        this._expressionWeight(manager, actualName, value),
+      );
+    }
+  }
+
+  _applyFaceValues() {
+    const manager = this.currentVrm && this.currentVrm.expressionManager;
+    if (!manager) return;
+    this._applyBoundValues(manager, this.faceCurrent, this.faceBindings);
+  }
+
+  getExpressionCapabilities() {
+    const face = Object.entries(this.faceBindings)
+      .filter(([, actualName]) => Boolean(actualName))
+      .map(([logicalName]) => logicalName);
+    const mouth = Object.entries(this.mouthBindings)
+      .filter(([, actualName]) => Boolean(actualName))
+      .map(([logicalName]) => logicalName);
+    return { face, mouth };
   }
 
   configureMouth(settings = {}) {
@@ -153,10 +332,12 @@ export class EmbeddedVRMRenderer {
     const manager = this.currentVrm && this.currentVrm.expressionManager;
     if (!manager) return;
 
-    for (const name of Object.keys(this.mouthCurrent)) {
-      if (forceClosed) this.mouthCurrent[name] = 0;
-      manager.setValue(name, this.mouthCurrent[name]);
+    if (forceClosed) {
+      for (const name of Object.keys(this.mouthCurrent)) {
+        this.mouthCurrent[name] = 0;
+      }
     }
+    this._applyBoundValues(manager, this.mouthCurrent, this.mouthBindings);
   }
 
   frame(object) {
@@ -184,11 +365,14 @@ export class EmbeddedVRMRenderer {
 
   clear() {
     this.loadToken += 1;
+    this.clearFaceExpression(true);
     this.closeMouth(true);
     if (!this.currentVrm) return;
     this.scene.remove(this.currentVrm.scene);
     VRMUtils.deepDispose(this.currentVrm.scene);
     this.currentVrm = null;
+    this.faceBindings = {};
+    this.mouthBindings = {};
   }
 
   resize() {

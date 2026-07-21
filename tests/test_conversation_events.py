@@ -31,6 +31,29 @@ class ConversationEventTests(unittest.TestCase):
         )
         self.assertEqual(events[-1][1]["reply"], "reply:Hello")
         self.assertFalse(events[-1][1]["spoken"])
+        self.assertEqual(
+            events[1][1]["expression"],
+            {"preset": "soft", "score": 0},
+        )
+
+    def test_reply_ready_uses_shared_avatar_expression_classifier(self) -> None:
+        events: list[tuple[str, dict]] = []
+        service = ConversationService(
+            recorder=lambda: None,
+            transcriber=lambda _: "",
+            responder=lambda _: "That is awesome and perfect!",
+            speaker=lambda _: None,
+            on_reply=None,
+            on_event=lambda event_type, data: events.append(
+                (event_type, dict(data))
+            ),
+        )
+
+        service.process_text("Did it work?", speak=False)
+
+        expression = events[1][1]["expression"]
+        self.assertEqual(expression["preset"], "happy")
+        self.assertGreaterEqual(expression["score"], 4)
 
     def test_voice_turn_emits_recording_and_transcription_events(self) -> None:
         service, events = self.make_service(
