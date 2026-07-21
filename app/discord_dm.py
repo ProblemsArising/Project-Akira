@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Callable, Protocol
 
 from app.discord_access import DiscordAccessPolicy, get_discord_access_policy
+from app.discord_commands import DiscordCommandRouter
 from app.discord_conversations import (
     DiscordConversationSessions,
     get_discord_conversation_sessions,
@@ -46,6 +47,7 @@ ConversationServiceFactory = Callable[[], ConversationServiceLike]
 
 class DiscordDMOutcome(str, Enum):
     REPLIED = "replied"
+    COMMAND = "command"
     IGNORED_NON_DM = "ignored_non_dm"
     IGNORED_BOT = "ignored_bot"
     IGNORED_EMPTY = "ignored_empty"
@@ -116,6 +118,7 @@ class DiscordDMHandler:
         access_policy: DiscordAccessPolicy | None = None,
         service_factory: ConversationServiceFactory | None = None,
         conversation_sessions: DiscordConversationSessions | None = None,
+        command_router: DiscordCommandRouter | None = None,
         failure_reply: str = DEFAULT_FAILURE_REPLY,
     ) -> None:
         normalized_failure = str(failure_reply).strip()
@@ -136,6 +139,10 @@ class DiscordDMHandler:
             )
         else:
             self._conversation_sessions = get_discord_conversation_sessions()
+        self._command_router = command_router or DiscordCommandRouter(
+            conversation_sessions=self._conversation_sessions,
+            access_policy=self._access_policy,
+        )
         self._failure_reply = normalized_failure
 
     async def handle_message(self, message: Any) -> DiscordDMResult:
@@ -159,6 +166,22 @@ class DiscordDMHandler:
             return DiscordDMResult(DiscordDMOutcome.FAILED)
 
         try:
+            command_result = await asyncio.to_thread(
+                self._command_router.handle,
+                author,
+                content,
+            )
+            if command_result is not None:
+                parts = split_discord_message(command_result.reply)
+                for part in parts:
+                    await send(part)
+                if command_result.stop_after_reply:
+                    self._command_router.schedule_stop()
+                return DiscordDMResult(
+                    DiscordDMOutcome.COMMAND,
+                    reply_parts=len(parts),
+                )
+
             async with _typing_indicator(channel):
                 result = await asyncio.to_thread(
                     self._conversation_sessions.process_text,
