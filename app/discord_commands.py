@@ -1,19 +1,4 @@
-"""Text commands for authorized Project Akira Discord DMs.
-
-These commands are intentionally handled before normal conversation messages:
-
-``/new [title]``
-    Start a fresh saved conversation for the requesting Discord user.
-
-``/status``
-    Show non-secret Discord configuration and session state.
-
-``/stop``
-    Confirm the request and then stop Discord remote messaging on a separate
-    thread after the confirmation has been sent.
-
-Issue #73 expands the basic status response with reconnect and health details.
-"""
+"""Text commands for authorized Project Akira Discord DMs."""
 
 from __future__ import annotations
 
@@ -47,6 +32,14 @@ class DiscordRemoteStatus:
     allowed_user_count: int
     active_session_count: int
     mapped_user_count: int
+    adapter_health: str = "unavailable"
+    gateway_connected: bool | None = None
+    gateway_ready: bool | None = None
+    reconnect_enabled: bool | None = None
+    reconnect_count: int = 0
+    disconnect_count: int = 0
+    latency_ms: float | None = None
+    uptime_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +66,23 @@ def parse_discord_command(content: str) -> tuple[str, str] | None:
     return command.casefold(), arguments.strip() if separator else ""
 
 
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "unavailable"
+
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 def format_discord_status(status: DiscordRemoteStatus) -> str:
-    """Render status without including credentials or user IDs."""
+    """Render connection health without credentials, IDs, or error details."""
 
     if status.token_configured is True:
         token_status = "configured"
@@ -83,20 +91,59 @@ def format_discord_status(status: DiscordRemoteStatus) -> str:
     else:
         token_status = "unavailable"
 
+    if status.gateway_ready is True:
+        gateway_status = "ready"
+    elif status.gateway_connected is True:
+        gateway_status = "connected"
+    elif status.gateway_connected is False:
+        gateway_status = "disconnected"
+    else:
+        gateway_status = "unavailable"
+
+    if status.reconnect_enabled is True:
+        reconnect_status = "enabled"
+    elif status.reconnect_enabled is False:
+        reconnect_status = "disabled"
+    else:
+        reconnect_status = "unavailable"
+
+    recovery_label = "recovery" if status.reconnect_count == 1 else "recoveries"
+    disconnect_label = (
+        "disconnect" if status.disconnect_count == 1 else "disconnects"
+    )
+
     allowed_label = "user" if status.allowed_user_count == 1 else "users"
     active_label = "session" if status.active_session_count == 1 else "sessions"
     saved_label = (
         "conversation" if status.mapped_user_count == 1 else "conversations"
     )
 
-    return (
-        "Project Akira Discord status\n"
-        f"- Connection: {status.adapter_state}\n"
-        f"- Bot token: {token_status}\n"
-        f"- Access: {status.allowed_user_count} allowed {allowed_label}\n"
-        f"- Runtime: {status.active_session_count} active {active_label}\n"
-        f"- Saved: {status.mapped_user_count} mapped {saved_label}"
+    lines = [
+        "Project Akira Discord status",
+        f"- Connection: {status.adapter_state}",
+        f"- Health: {status.adapter_health}",
+        f"- Gateway: {gateway_status}",
+        (
+            f"- Reconnect: {reconnect_status} "
+            f"({status.reconnect_count} {recovery_label}, "
+            f"{status.disconnect_count} {disconnect_label})"
+        ),
+    ]
+
+    if status.latency_ms is not None:
+        lines.append(f"- Latency: {status.latency_ms:.0f} ms")
+    if status.uptime_seconds is not None:
+        lines.append(f"- Uptime: {_format_duration(status.uptime_seconds)}")
+
+    lines.extend(
+        [
+            f"- Bot token: {token_status}",
+            f"- Access: {status.allowed_user_count} allowed {allowed_label}",
+            f"- Runtime: {status.active_session_count} active {active_label}",
+            f"- Saved: {status.mapped_user_count} mapped {saved_label}",
+        ]
     )
+    return "\n".join(lines)
 
 
 class DiscordCommandRouter:
@@ -178,18 +225,33 @@ class DiscordCommandRouter:
         try:
             self._stop_callback()
         except Exception:
-            # Issue #73 adds command-visible health/error reporting. A stop
-            # request must not raise back into Discord's gateway event loop.
             pass
 
     def _default_status(self) -> DiscordRemoteStatus:
         adapter_state = "unavailable"
+        adapter_health = "unavailable"
+        gateway_connected: bool | None = None
+        gateway_ready: bool | None = None
+        reconnect_enabled: bool | None = None
+        reconnect_count = 0
+        disconnect_count = 0
+        latency_ms: float | None = None
+        uptime_seconds: float | None = None
         token_configured: bool | None = None
 
         try:
             from app.discord_adapter import get_discord_adapter_service
 
-            adapter_state = get_discord_adapter_service().snapshot().state.value
+            adapter = get_discord_adapter_service().snapshot()
+            adapter_state = adapter.state.value
+            adapter_health = adapter.health.value
+            gateway_connected = adapter.connected
+            gateway_ready = adapter.ready
+            reconnect_enabled = adapter.reconnect_enabled
+            reconnect_count = adapter.reconnect_count
+            disconnect_count = adapter.disconnect_count
+            latency_ms = adapter.latency_ms
+            uptime_seconds = adapter.uptime_seconds
         except Exception:
             pass
 
@@ -208,6 +270,14 @@ class DiscordCommandRouter:
             allowed_user_count=access.allowed_user_count,
             active_session_count=sessions.active_session_count,
             mapped_user_count=sessions.mapped_user_count,
+            adapter_health=adapter_health,
+            gateway_connected=gateway_connected,
+            gateway_ready=gateway_ready,
+            reconnect_enabled=reconnect_enabled,
+            reconnect_count=reconnect_count,
+            disconnect_count=disconnect_count,
+            latency_ms=latency_ms,
+            uptime_seconds=uptime_seconds,
         )
 
     @staticmethod

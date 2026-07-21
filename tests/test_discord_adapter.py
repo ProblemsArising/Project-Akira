@@ -56,7 +56,7 @@ class DiscordAdapterServiceTests(unittest.TestCase):
         self.assertEqual(service.state, DiscordAdapterState.RUNNING)
         self.assertTrue(service.is_running)
         self.assertEqual(client.token, "test-token")
-        self.assertFalse(client.reconnect)
+        self.assertTrue(client.reconnect)
 
         self.assertTrue(service.stop(timeout=1))
         self.assertTrue(client.close_called.is_set())
