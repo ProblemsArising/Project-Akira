@@ -13,6 +13,13 @@ export class EmbeddedVRMRenderer {
     this.currentVrm = null;
     this.loadToken = 0;
     this.clock = new THREE.Clock();
+    this.mouthSettings = {
+      mouthFps: 28,
+      attackSpeed: 0.60,
+      releaseSpeed: 0.42,
+    };
+    this.mouthCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    this.mouthTarget = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
 
     this.renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -42,7 +49,10 @@ export class EmbeddedVRMRenderer {
 
     this.renderer.setAnimationLoop(() => {
       const delta = Math.min(this.clock.getDelta(), 0.1);
-      if (this.currentVrm) this.currentVrm.update(delta);
+      if (this.currentVrm) {
+        this._updateMouth(delta);
+        this.currentVrm.update(delta);
+      }
       this.renderer.render(this.scene, this.camera);
     });
   }
@@ -85,10 +95,68 @@ export class EmbeddedVRMRenderer {
 
     VRMUtils.rotateVRM0(vrm);
     this.currentVrm = vrm;
+    this.closeMouth(true);
     this.scene.add(vrm.scene);
     vrm.scene.updateMatrixWorld(true);
     this.frame(vrm.scene);
     return vrm;
+  }
+
+  configureMouth(settings = {}) {
+    const fps = Number(settings.mouthFps ?? settings.mouth_fps);
+    const attack = Number(settings.attackSpeed ?? settings.mouth_attack_speed);
+    const release = Number(settings.releaseSpeed ?? settings.mouth_release_speed);
+    if (Number.isFinite(fps)) this.mouthSettings.mouthFps = Math.max(1, Math.min(240, fps));
+    if (Number.isFinite(attack)) this.mouthSettings.attackSpeed = Math.max(0, Math.min(1, attack));
+    if (Number.isFinite(release)) this.mouthSettings.releaseSpeed = Math.max(0, Math.min(1, release));
+  }
+
+  setMouthVisemes(blends = {}) {
+    for (const name of Object.keys(this.mouthTarget)) {
+      const value = Number(blends[name]);
+      this.mouthTarget[name] = Number.isFinite(value)
+        ? Math.max(0, Math.min(1, value))
+        : 0;
+    }
+    return Boolean(this.currentVrm && this.currentVrm.expressionManager);
+  }
+
+  closeMouth(immediate = false) {
+    for (const name of Object.keys(this.mouthTarget)) {
+      this.mouthTarget[name] = 0;
+    }
+    if (!this.currentVrm || !this.currentVrm.expressionManager) {
+      for (const name of Object.keys(this.mouthCurrent)) this.mouthCurrent[name] = 0;
+      return;
+    }
+    if (immediate) this._applyMouthValues(true);
+  }
+
+  _updateMouth(delta) {
+    const currentOpen = Math.max(...Object.values(this.mouthCurrent));
+    const targetOpen = Math.max(...Object.values(this.mouthTarget));
+    const baseSpeed = targetOpen >= currentOpen
+      ? this.mouthSettings.attackSpeed
+      : this.mouthSettings.releaseSpeed;
+    const frameScale = Math.max(0.05, delta * this.mouthSettings.mouthFps);
+    const speed = 1 - Math.pow(1 - baseSpeed, frameScale);
+
+    for (const name of Object.keys(this.mouthCurrent)) {
+      const current = this.mouthCurrent[name];
+      const target = this.mouthTarget[name];
+      this.mouthCurrent[name] = current + (target - current) * speed;
+    }
+    this._applyMouthValues(false);
+  }
+
+  _applyMouthValues(forceClosed) {
+    const manager = this.currentVrm && this.currentVrm.expressionManager;
+    if (!manager) return;
+
+    for (const name of Object.keys(this.mouthCurrent)) {
+      if (forceClosed) this.mouthCurrent[name] = 0;
+      manager.setValue(name, this.mouthCurrent[name]);
+    }
   }
 
   frame(object) {
@@ -116,6 +184,7 @@ export class EmbeddedVRMRenderer {
 
   clear() {
     this.loadToken += 1;
+    this.closeMouth(true);
     if (!this.currentVrm) return;
     this.scene.remove(this.currentVrm.scene);
     VRMUtils.deepDispose(this.currentVrm.scene);
