@@ -1,4 +1,5 @@
 import { EmbeddedVRMRenderer } from "/static/avatar/renderer.js";
+import { TextExpressionPlayer } from "/static/avatar/expressions.js";
 import { TextVisemePlayer } from "/static/avatar/visemes.js";
 
 window.__akiraAvatarAppStarted = true;
@@ -40,9 +41,11 @@ const COPY = {
 };
 
 let embeddedRenderer = null;
+let expressionPlayer = null;
 let visemePlayer = null;
 try {
   embeddedRenderer = new EmbeddedVRMRenderer(elements.rendererHost);
+  expressionPlayer = new TextExpressionPlayer(embeddedRenderer);
   visemePlayer = new TextVisemePlayer(embeddedRenderer);
 } catch (error) {
   console.error("Embedded VRM renderer could not start", error);
@@ -101,12 +104,18 @@ async function readJson(response) {
 }
 
 async function syncAvatarSettings() {
-  if (!visemePlayer) return;
+  if (!visemePlayer && !expressionPlayer) return;
   try {
     const payload = await readJson(await fetch("/api/settings", { cache: "no-store" }));
-    visemePlayer.configure((payload.settings && payload.settings.avatar) || {});
+    const rootSettings = payload.settings || {};
+    const settings = {
+      ...(rootSettings.avatar || {}),
+      tts_rate: rootSettings.tts && rootSettings.tts.rate,
+    };
+    if (expressionPlayer) expressionPlayer.configure(settings);
+    if (visemePlayer) visemePlayer.configure(settings);
   } catch (error) {
-    console.warn("Avatar mouth settings could not be loaded", error);
+    console.warn("Avatar animation settings could not be loaded", error);
   }
 }
 
@@ -137,11 +146,23 @@ async function loadConfiguredModel(model) {
     document.body.classList.remove("model-error");
     const versionText = model.vrm_version ? `VRM ${model.vrm_version}` : "VRM";
     const sizeText = formatBytes(model.size_bytes);
-    elements.rendererText.textContent = "Embedded VRM · text visemes";
+    const capabilities = embeddedRenderer.getExpressionCapabilities();
+    const hasFaceExpressions = capabilities.face.length > 0;
+    elements.rendererText.textContent = hasFaceExpressions
+      ? "Embedded VRM · natural visemes + expressions"
+      : "Embedded VRM · natural visemes · no face presets";
     elements.modelText.textContent = [model.filename, versionText, sizeText]
       .filter(Boolean)
       .join(" · ");
-    hideModelNotice();
+    console.info("Embedded VRM expression capabilities", capabilities);
+    if (hasFaceExpressions) {
+      hideModelNotice();
+    } else {
+      showModelNotice(
+        "This VRM does not expose standard facial-expression presets. Mouth animation will still work.",
+        true,
+      );
+    }
   } catch (error) {
     console.error("VRM model could not be rendered", error);
     document.body.classList.remove("model-loaded");
@@ -154,6 +175,7 @@ async function loadConfiguredModel(model) {
 }
 
 function clearConfiguredModel() {
+  if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
   state.model = null;
   state.modelLoading = false;
@@ -263,12 +285,20 @@ function handleEvent(event) {
       break;
     case "chat.reply_ready":
       setStage(data.will_speak ? "speaking" : "idle");
+      if (expressionPlayer) {
+        expressionPlayer.start(
+          data.expression || { preset: "soft", score: 0 },
+          data.reply || "",
+          Boolean(data.will_speak),
+        );
+      }
       if (visemePlayer) {
         if (data.will_speak) visemePlayer.start(data.reply || "");
         else visemePlayer.stop();
       }
       break;
     case "chat.completed":
+      if (expressionPlayer) expressionPlayer.complete();
       if (visemePlayer) visemePlayer.stop();
       restoreIdle();
       break;
@@ -277,16 +307,21 @@ function handleEvent(event) {
       restoreIdle();
       break;
     case "chat.failed":
+      if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
       setStage("error", data.error || "Akira could not complete that reply.");
       break;
     case "personality.changed":
       if (data.name) elements.modeText.textContent = data.name;
       break;
+    case "settings.updated":
+      syncAvatarSettings();
+      break;
     case "avatar.model.changed":
       syncModel();
       break;
     case "system.shutdown":
+      if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
       setConnection(false, "Server stopped");
       setStage("offline");
@@ -323,6 +358,7 @@ function connect() {
   });
 
   socket.addEventListener("close", () => {
+    if (expressionPlayer) expressionPlayer.cancel();
     if (visemePlayer) visemePlayer.stop();
     if (state.socket !== socket) return;
     setConnection(false, "Reconnecting");
@@ -342,6 +378,7 @@ elements.removeModelButton.addEventListener("click", removeModel);
 
 window.addEventListener("beforeunload", () => {
   if (state.socket) state.socket.close();
+  if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
   if (embeddedRenderer) embeddedRenderer.dispose();
 });

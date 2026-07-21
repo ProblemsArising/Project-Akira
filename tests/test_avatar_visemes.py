@@ -28,7 +28,7 @@ class AvatarVisemeTests(unittest.TestCase):
         self.assertIn("setMouthVisemes", source)
         self.assertIn("closeMouth", source)
         self.assertIn("expressionManager", source)
-        self.assertIn("manager.setValue(name", source)
+        self.assertIn("_applyBoundValues(manager, this.mouthCurrent", source)
         self.assertIn("_updateMouth(delta)", source)
 
     def test_avatar_events_start_and_stop_visemes_around_tts(self) -> None:

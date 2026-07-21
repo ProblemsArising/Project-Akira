@@ -33,6 +33,24 @@ ConversationContextLoader = Callable[[list[tuple[str, str]]], None]
 ConversationContextResetter = Callable[[], None]
 
 
+def _reply_expression_metadata(text: str) -> dict[str, object]:
+    """Classify a reply for avatar clients without risking the chat turn."""
+
+    try:
+        from avatar.expression_keywords import (
+            best_expression_score,
+            expression_from_text,
+        )
+
+        return {
+            "preset": expression_from_text(text),
+            "score": best_expression_score(text),
+        }
+    except Exception:
+        # Avatar classification is optional and must never break a reply.
+        return {"preset": "soft", "score": 0}
+
+
 class HistoryStore(Protocol):
     """Minimum history API required by ``ConversationService``."""
 
@@ -463,6 +481,7 @@ class ConversationService:
                         "reply": reply,
                         "source": source,
                         "will_speak": bool(speak),
+                        "expression": _reply_expression_metadata(reply),
                     },
                 )
 
