@@ -16,6 +16,7 @@ import threading
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from typing import Any, AsyncIterator, Callable, Mapping, Protocol
+from urllib.parse import unquote
 
 from fastapi import (
     Depends,
@@ -32,6 +33,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.avatar_models import (
+    AvatarModelInfo,
+    AvatarModelStore,
+    AvatarModelValidationError,
+    get_avatar_model_store,
+)
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
@@ -269,6 +276,16 @@ class StatusResponse(StrictModel):
     event_clients: int
 
 
+class AvatarModelResponse(StrictModel):
+    configured: bool
+    filename: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    uploaded_at: str | None = None
+    vrm_version: str | None = None
+    model_url: str | None = None
+
+
 class ChatRequest(StrictModel):
     message: str = Field(min_length=1, max_length=50_000)
     speak: bool = True
@@ -475,6 +492,10 @@ class PersonalityMutationResponse(StrictModel):
     applied_live: bool
 
 
+def _avatar_model_response(model: AvatarModelInfo) -> AvatarModelResponse:
+    return AvatarModelResponse(**model.to_dict())
+
+
 def _model_info_response(model: ModelInfo) -> ModelInfoResponse:
     return ModelInfoResponse(**model.to_dict())
 
@@ -609,7 +630,11 @@ async def _receive_websocket_commands(
             )
 
 
-def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
+def create_app(
+    runtime: BackendRuntime | None = None,
+    *,
+    avatar_model_store: AvatarModelStore | None = None,
+) -> FastAPI:
     """Create the FastAPI application.
 
     Supplying a runtime is mainly useful for tests and future desktop-shell
@@ -617,6 +642,7 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
     """
 
     backend_runtime = runtime or BackendRuntime()
+    embedded_avatar_store = avatar_model_store or get_avatar_model_store()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -750,6 +776,117 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
+
+    @application.get(
+        "/api/avatar/model",
+        response_model=AvatarModelResponse,
+        tags=["avatar"],
+    )
+    def avatar_model_status() -> AvatarModelResponse:
+        """Return metadata for the selected embedded VRM model."""
+
+        try:
+            return _avatar_model_response(embedded_avatar_store.status())
+        except (AvatarModelValidationError, OSError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="The saved VRM avatar could not be read.",
+            ) from error
+
+    @application.get(
+        "/api/avatar/model/file",
+        include_in_schema=False,
+    )
+    def avatar_model_file() -> FileResponse:
+        """Stream the selected VRM model to the local embedded renderer."""
+
+        try:
+            model = embedded_avatar_store.status()
+        except (AvatarModelValidationError, OSError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="The saved VRM avatar could not be read.",
+            ) from error
+
+        if not model.configured:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No embedded VRM avatar is configured.",
+            )
+
+        return FileResponse(
+            embedded_avatar_store.model_path,
+            media_type="model/gltf-binary",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.post(
+        "/api/avatar/model",
+        response_model=AvatarModelResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["avatar"],
+    )
+    async def upload_avatar_model(request: Request) -> AvatarModelResponse:
+        """Validate and persist one uploaded VRM model."""
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                announced_size = int(content_length)
+            except ValueError:
+                announced_size = 0
+            if announced_size > embedded_avatar_store.max_file_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="The selected VRM file is too large.",
+                )
+
+        filename = unquote(
+            request.headers.get("x-akira-filename", "avatar.vrm")
+        )
+        payload = await request.body()
+        if len(payload) > embedded_avatar_store.max_file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="The selected VRM file is too large.",
+            )
+
+        try:
+            model = embedded_avatar_store.save(filename, payload)
+        except AvatarModelValidationError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(error),
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Project Akira could not save the VRM avatar.",
+            ) from error
+
+        response = _avatar_model_response(model)
+        backend_runtime.events.publish("avatar.model.changed", response.model_dump())
+        return response
+
+    @application.delete(
+        "/api/avatar/model",
+        response_model=AvatarModelResponse,
+        tags=["avatar"],
+    )
+    def delete_avatar_model() -> AvatarModelResponse:
+        """Remove the selected embedded VRM model."""
+
+        try:
+            embedded_avatar_store.delete()
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Project Akira could not remove the VRM avatar.",
+            ) from error
+
+        response = AvatarModelResponse(configured=False)
+        backend_runtime.events.publish("avatar.model.changed", response.model_dump())
+        return response
 
     @application.get("/api/health", response_model=HealthResponse, tags=["system"])
     def health() -> HealthResponse:

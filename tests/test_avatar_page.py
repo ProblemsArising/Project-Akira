@@ -48,13 +48,25 @@ class AvatarPageTests(unittest.TestCase):
         page = self.client.get("/avatar")
         stylesheet = self.client.get("/static/avatar/styles.css")
         script = self.client.get("/static/avatar/app.js")
+        renderer = self.client.get("/static/avatar/renderer.js")
+        three = self.client.get(
+            "/static/avatar/vendor/three/three.module.min.js"
+        )
+        three_vrm = self.client.get(
+            "/static/avatar/vendor/three-vrm/three-vrm.module.min.js"
+        )
 
         self.assertEqual(page.status_code, 200)
         self.assertIn('id="avatarCore"', page.text)
+        self.assertIn('id="rendererHost"', page.text)
         self.assertEqual(stylesheet.status_code, 200)
         self.assertIn('body[data-state="speaking"]', stylesheet.text)
         self.assertEqual(script.status_code, 200)
         self.assertIn("/api/events", script.text)
+        self.assertEqual(renderer.status_code, 200)
+        self.assertIn("VRMLoaderPlugin", renderer.text)
+        self.assertEqual(three.status_code, 200)
+        self.assertEqual(three_vrm.status_code, 200)
         self.assertEqual(self.service_factory_calls, 0)
 
 

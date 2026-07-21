@@ -31,3 +31,6 @@ data/calibration_sample.wav
 
 data/discord_settings.json
 data/discord_conversations.json
+
+# User-selected embedded VRM avatar
+data/avatar/
