@@ -8,6 +8,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.discord_notifications import (
+    DiscordNotificationReport,
+    DiscordNotificationService,
+    get_discord_notification_service,
+)
 from app.discord_settings import (
     DiscordSettingsController,
     DiscordSettingsSnapshot,
@@ -45,9 +50,25 @@ class DiscordSettingsUpdateRequest(StrictModel):
     bot_token: str | None = Field(default=None, max_length=2_000)
 
 
+class DiscordNotificationRequest(StrictModel):
+    message: str = Field(min_length=1, max_length=20_000)
+    user_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class DiscordNotificationResponse(StrictModel):
+    recipient_count: int
+    message_parts: int
+    messages_sent: int
+
+
 def _controller(request: Request) -> DiscordSettingsController:
     controller = getattr(request.app.state, "discord_controller", None)
     return controller or get_discord_settings_controller()
+
+
+def _notifications(request: Request) -> DiscordNotificationService:
+    service = getattr(request.app.state, "discord_notifications", None)
+    return service or get_discord_notification_service()
 
 
 def _response(snapshot: DiscordSettingsSnapshot) -> DiscordSettingsResponse:
@@ -124,6 +145,31 @@ def delete_discord_token(request: Request) -> DiscordSettingsResponse:
         return _response(_controller(request).delete_token())
     except Exception as error:
         raise _discord_error(error) from error
+
+
+@router.post(
+    "/notifications",
+    response_model=DiscordNotificationResponse,
+)
+def send_discord_notification(
+    payload: DiscordNotificationRequest,
+    request: Request,
+) -> DiscordNotificationResponse:
+    """Send a local application notification to authorized Discord users."""
+
+    try:
+        report = _notifications(request).send(
+            payload.message,
+            user_ids=payload.user_ids,
+        )
+    except Exception as error:
+        raise _discord_error(error) from error
+
+    return DiscordNotificationResponse(
+        recipient_count=report.recipient_count,
+        message_parts=report.message_parts,
+        messages_sent=report.messages_sent,
+    )
 
 
 def register_discord_routes(application: FastAPI, web_root: str | Path) -> None:
