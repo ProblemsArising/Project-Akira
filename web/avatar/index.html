@@ -26,6 +26,8 @@
       <div class="pulse-ring ring-one"></div>
       <div class="pulse-ring ring-two"></div>
 
+      <div id="rendererHost" class="renderer-host"></div>
+
       <div id="avatarCore" class="avatar-core" aria-hidden="true">
         <div class="ear ear-left"></div>
         <div class="ear ear-right"></div>
@@ -36,6 +38,10 @@
           </div>
           <div class="mouth"><span></span></div>
         </div>
+      </div>
+
+      <div id="modelNotice" class="model-notice" hidden role="status">
+        <span id="modelNoticeText"></span>
       </div>
 
       <div class="state-copy">
@@ -51,11 +57,25 @@
       </div>
       <div class="status-row">
         <span class="status-key">Renderer</span>
-        <span>VMC / future embedded VRM</span>
+        <span id="rendererText">Placeholder / optional VMC</span>
+      </div>
+      <div class="status-row model-status-row">
+        <span class="status-key">Model</span>
+        <span id="modelText">No VRM selected</span>
+      </div>
+      <div class="model-actions">
+        <label class="model-button">
+          <input id="modelInput" type="file" accept=".vrm,model/gltf-binary" hidden>
+          Choose VRM
+        </label>
+        <button id="removeModelButton" class="model-button secondary" type="button" hidden>
+          Remove
+        </button>
       </div>
     </footer>
   </main>
 
-  <script src="/static/avatar/app.js" defer></script>
+  <script src="/static/avatar/bootstrap.js"></script>
+  <script type="module" src="/static/avatar/app.js"></script>
 </body>
 </html>

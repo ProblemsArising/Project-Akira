@@ -257,3 +257,116 @@ body[data-state="offline"] .avatar-core { filter: grayscale(0.7); opacity: 0.62;
   .state-copy { bottom: 1%; }
   .avatar-core { width: min(40vh, 175px); }
 }
+
+/* Embedded VRM renderer */
+.renderer-host {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.renderer-host canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+body.model-loaded .renderer-host {
+  opacity: 1;
+}
+
+body.model-loaded .avatar-core,
+body.model-loaded .pulse-ring {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.model-loaded .ambient {
+  opacity: 0.55;
+}
+
+.model-notice {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  z-index: 4;
+  max-width: calc(100% - 40px);
+  transform: translateX(-50%);
+  padding: 8px 11px;
+  border: 1px solid rgba(200, 140, 255, 0.3);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(13, 11, 22, 0.82);
+  backdrop-filter: blur(12px);
+  font-size: 10px;
+  text-align: center;
+}
+
+.model-notice.error {
+  border-color: rgba(255, 128, 148, 0.42);
+  color: #ffd2d9;
+}
+
+.state-copy {
+  z-index: 3;
+  pointer-events: none;
+}
+
+.model-status-row span:last-child {
+  max-width: 68%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.model-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.model-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 0 11px;
+  border: 1px solid rgba(200, 140, 255, 0.3);
+  border-radius: 9px;
+  color: var(--text);
+  background: rgba(200, 140, 255, 0.1);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.model-button:hover {
+  border-color: rgba(200, 140, 255, 0.58);
+  background: rgba(200, 140, 255, 0.16);
+}
+
+.model-button.secondary {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.model-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+body.model-loaded[data-state="speaking"] .renderer-host {
+  filter: saturate(1.04) brightness(1.02);
+}
+
+@media (max-height: 520px) {
+  .model-status-row,
+  .model-actions {
+    display: none;
+  }
+}

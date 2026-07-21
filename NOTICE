@@ -6,3 +6,9 @@ Originally developed by ProblemsArising
 This product includes software developed for Project Akira.
 Modified distributions must retain this NOTICE file as required by
 the Apache License, Version 2.0.
+
+The embedded avatar renderer includes Three.js, licensed under the MIT License.
+Copyright © 2010-2026 three.js authors.
+
+The embedded avatar renderer includes @pixiv/three-vrm, licensed under the MIT
+License. Copyright © 2019-2026 pixiv Inc.
