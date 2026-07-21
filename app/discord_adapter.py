@@ -1,18 +1,17 @@
-"""Discord client lifecycle service for Project Akira.
-
-This module intentionally owns only the Discord connection lifecycle. Message
-authorization, DM handling, conversation mapping, commands, health reporting,
-and settings integration are implemented by later Discord milestone issues.
+"""Discord client lifecycle, reconnect, and health service.
 
 ``discord.py`` is imported lazily by the default client factory so importing
-Project Akira's core modules and running unit tests does not require Discord
-support to initialize.
+Project Akira's core modules and running unit tests does not initialize Discord.
+
+The client uses discord.py's built-in reconnect loop. Gateway events update a
+thread-safe health snapshot separately from the worker-thread lifecycle.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import math
 import threading
 import time
 
@@ -24,7 +23,7 @@ from typing import Any, Awaitable, Callable, Protocol
 class DiscordClient(Protocol):
     """Minimum async client API required by ``DiscordAdapterService``."""
 
-    async def start(self, token: str, *, reconnect: bool = False) -> None: ...
+    async def start(self, token: str, *, reconnect: bool = True) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -37,7 +36,7 @@ DiscordMessageHandler = Callable[[Any], Awaitable[Any]]
 
 
 class DiscordAdapterState(str, Enum):
-    """Lifecycle state exposed by the Discord adapter."""
+    """Worker lifecycle state exposed by the Discord adapter."""
 
     STOPPED = "stopped"
     STARTING = "starting"
@@ -46,19 +45,51 @@ class DiscordAdapterState(str, Enum):
     FAILED = "failed"
 
 
+class DiscordAdapterHealth(str, Enum):
+    """Gateway health derived from lifecycle and connection events."""
+
+    STOPPED = "stopped"
+    CONNECTING = "connecting"
+    HEALTHY = "healthy"
+    RECONNECTING = "reconnecting"
+    STOPPING = "stopping"
+    FAILED = "failed"
+
+
+class DiscordGatewayEvent(str, Enum):
+    """Connection events emitted by the Discord client."""
+
+    CONNECTED = "connected"
+    READY = "ready"
+    RESUMED = "resumed"
+    DISCONNECTED = "disconnected"
+
+
+DiscordGatewayEventHandler = Callable[[DiscordGatewayEvent], None]
+
+
 @dataclass(frozen=True, slots=True)
 class DiscordAdapterSnapshot:
-    """Thread-safe public view of the current adapter state."""
+    """Thread-safe, non-secret adapter and gateway health."""
 
     state: DiscordAdapterState
     running: bool
     last_error: str | None = None
+    health: DiscordAdapterHealth = DiscordAdapterHealth.STOPPED
+    connected: bool = False
+    ready: bool = False
+    reconnect_enabled: bool = True
+    reconnect_count: int = 0
+    disconnect_count: int = 0
+    latency_ms: float | None = None
+    uptime_seconds: float | None = None
 
 
 def create_default_discord_client(
     message_handler: DiscordMessageHandler | None = None,
+    gateway_event_handler: DiscordGatewayEventHandler | None = None,
 ) -> DiscordClient:
-    """Create the production client and attach the optional DM handler."""
+    """Create the production client and attach DM and health handlers."""
 
     try:
         import discord
@@ -72,22 +103,44 @@ def create_default_discord_client(
     intents.dm_messages = True
     client = discord.Client(intents=intents)
 
+    def emit_gateway_event(event: DiscordGatewayEvent) -> None:
+        if gateway_event_handler is None:
+            return
+        try:
+            gateway_event_handler(event)
+        except Exception:
+            # Health reporting must never interrupt Discord's gateway events.
+            pass
+
     if message_handler is not None:
+
         @client.event
         async def on_message(message: Any) -> None:
             await message_handler(message)
+
+    if gateway_event_handler is not None:
+
+        @client.event
+        async def on_connect() -> None:
+            emit_gateway_event(DiscordGatewayEvent.CONNECTED)
+
+        @client.event
+        async def on_ready() -> None:
+            emit_gateway_event(DiscordGatewayEvent.READY)
+
+        @client.event
+        async def on_resumed() -> None:
+            emit_gateway_event(DiscordGatewayEvent.RESUMED)
+
+        @client.event
+        async def on_disconnect() -> None:
+            emit_gateway_event(DiscordGatewayEvent.DISCONNECTED)
 
     return client
 
 
 class DiscordAdapterService:
-    """Run a Discord client on an isolated asyncio loop and worker thread.
-
-    ``start`` accepts a token directly but does not persist it. Issue #68 adds
-    secure token storage and will supply the retrieved token to this service.
-    The service is deliberately independent from FastAPI and the desktop UI so
-    both can control the same lifecycle API later.
-    """
+    """Run a reconnecting Discord client on an isolated asyncio thread."""
 
     def __init__(
         self,
@@ -98,7 +151,8 @@ class DiscordAdapterService:
     ) -> None:
         if client_factory is None:
             self._client_factory = lambda: create_default_discord_client(
-                message_handler
+                message_handler,
+                self.record_gateway_event,
             )
         else:
             self._client_factory = client_factory
@@ -111,6 +165,13 @@ class DiscordAdapterService:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client: DiscordClient | None = None
+
+        self._connected = False
+        self._ready = False
+        self._awaiting_reconnect = False
+        self._reconnect_count = 0
+        self._disconnect_count = 0
+        self._started_monotonic: float | None = None
 
         self._started_event = threading.Event()
         self._stopped_event = threading.Event()
@@ -137,27 +198,48 @@ class DiscordAdapterService:
             return self._last_error
 
     def snapshot(self) -> DiscordAdapterSnapshot:
-        """Return a stable status object suitable for APIs and future UI code."""
+        """Return the current lifecycle and gateway health."""
 
         with self._lock:
+            state = self._state
+            running = state in {
+                DiscordAdapterState.STARTING,
+                DiscordAdapterState.RUNNING,
+                DiscordAdapterState.STOPPING,
+            }
             error = None if self._last_error is None else str(self._last_error)
-            return DiscordAdapterSnapshot(
-                state=self._state,
-                running=self._state
-                in {
-                    DiscordAdapterState.STARTING,
-                    DiscordAdapterState.RUNNING,
-                    DiscordAdapterState.STOPPING,
-                },
-                last_error=error,
-            )
+            connected = self._connected
+            ready = self._ready
+            reconnect_count = self._reconnect_count
+            disconnect_count = self._disconnect_count
+            health = self._health_locked()
+            started = self._started_monotonic
+            client = self._client
+
+        latency_ms = self._read_latency_ms(client) if ready else None
+        uptime_seconds = None
+        if running and started is not None:
+            uptime_seconds = round(max(0.0, time.monotonic() - started), 1)
+
+        return DiscordAdapterSnapshot(
+            state=state,
+            running=running,
+            last_error=error,
+            health=health,
+            connected=connected,
+            ready=ready,
+            reconnect_enabled=True,
+            reconnect_count=reconnect_count,
+            disconnect_count=disconnect_count,
+            latency_ms=latency_ms,
+            uptime_seconds=uptime_seconds,
+        )
 
     def start(self, token: str, *, timeout: float = 5.0) -> bool:
         """Start the Discord client in the background.
 
-        Returns ``False`` when this service is already active. A blank token is
-        rejected before a worker is created. The token is passed only as the
-        worker argument and is never saved on the service instance.
+        The token is passed only to the worker and is not retained by the
+        service. discord.py handles transient reconnects after startup.
         """
 
         normalized_token = str(token).strip()
@@ -174,6 +256,12 @@ class DiscordAdapterService:
             self._last_error = None
             self._loop = None
             self._client = None
+            self._connected = False
+            self._ready = False
+            self._awaiting_reconnect = False
+            self._reconnect_count = 0
+            self._disconnect_count = 0
+            self._started_monotonic = time.monotonic()
             self._started_event.clear()
             self._stopped_event.clear()
             self._stop_requested.clear()
@@ -215,6 +303,7 @@ class DiscordAdapterService:
                 return False
 
             self._stop_requested.set()
+            self._awaiting_reconnect = False
             if self._state is not DiscordAdapterState.FAILED:
                 self._state = DiscordAdapterState.STOPPING
             loop = self._loop
@@ -229,7 +318,6 @@ class DiscordAdapterService:
             try:
                 future.result(timeout=remaining)
             except concurrent.futures.CancelledError:
-                # The worker may finish and close its loop at the same moment.
                 pass
             except concurrent.futures.TimeoutError:
                 pass
@@ -251,6 +339,43 @@ class DiscordAdapterService:
 
         return self._stopped_event.wait(timeout=timeout)
 
+    def record_gateway_event(
+        self,
+        event: DiscordGatewayEvent | str,
+    ) -> None:
+        """Record one Discord gateway event for health reporting."""
+
+        normalized_event = DiscordGatewayEvent(event)
+        with self._lock:
+            active = self._state in {
+                DiscordAdapterState.STARTING,
+                DiscordAdapterState.RUNNING,
+            }
+
+            if normalized_event is DiscordGatewayEvent.CONNECTED:
+                if active:
+                    self._connected = True
+                    self._ready = False
+                return
+
+            if normalized_event in {
+                DiscordGatewayEvent.READY,
+                DiscordGatewayEvent.RESUMED,
+            }:
+                if active:
+                    if self._awaiting_reconnect:
+                        self._reconnect_count += 1
+                    self._connected = True
+                    self._ready = True
+                    self._awaiting_reconnect = False
+                return
+
+            self._connected = False
+            self._ready = False
+            if active and not self._stop_requested.is_set():
+                self._disconnect_count += 1
+                self._awaiting_reconnect = True
+
     def _thread_main(self, token: str) -> None:
         try:
             asyncio.run(self._run_client(token))
@@ -261,6 +386,10 @@ class DiscordAdapterService:
             with self._lock:
                 self._loop = None
                 self._client = None
+                self._connected = False
+                self._ready = False
+                self._awaiting_reconnect = False
+                self._started_monotonic = None
                 if self._state is not DiscordAdapterState.FAILED:
                     self._state = DiscordAdapterState.STOPPED
             self._stopped_event.set()
@@ -283,8 +412,7 @@ class DiscordAdapterService:
             return
 
         try:
-            # Reconnect policy and connection health are added by issue #73.
-            await client.start(token, reconnect=False)
+            await client.start(token, reconnect=True)
         finally:
             await self._close_client(client)
 
@@ -293,18 +421,47 @@ class DiscordAdapterService:
         if not client.is_closed():
             await client.close()
 
+    @staticmethod
+    def _read_latency_ms(client: DiscordClient | None) -> float | None:
+        if client is None:
+            return None
+
+        try:
+            latency_seconds = float(getattr(client, "latency"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        if not math.isfinite(latency_seconds) or latency_seconds < 0:
+            return None
+        return round(latency_seconds * 1_000, 1)
+
+    def _health_locked(self) -> DiscordAdapterHealth:
+        if self._state is DiscordAdapterState.FAILED:
+            return DiscordAdapterHealth.FAILED
+        if self._state is DiscordAdapterState.STOPPING:
+            return DiscordAdapterHealth.STOPPING
+        if self._state is DiscordAdapterState.STOPPED:
+            return DiscordAdapterHealth.STOPPED
+        if self._connected and self._ready:
+            return DiscordAdapterHealth.HEALTHY
+        if self._awaiting_reconnect:
+            return DiscordAdapterHealth.RECONNECTING
+        return DiscordAdapterHealth.CONNECTING
+
     def _record_failure(self, error: Exception) -> None:
         callback = None
         with self._lock:
             self._last_error = error
             self._state = DiscordAdapterState.FAILED
+            self._connected = False
+            self._ready = False
+            self._awaiting_reconnect = False
             callback = self._on_error
 
         if callback is not None:
             try:
                 callback(error)
             except Exception:
-                # Diagnostic callbacks must never kill or mask the worker.
                 pass
 
 
