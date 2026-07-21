@@ -8,6 +8,8 @@ loaded lazily only when an endpoint first needs the conversation service.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 import json
 import threading
@@ -49,6 +51,8 @@ from app.personalities import (
     get_personality_store,
 )
 from app.startup import StartupRegistrationError, get_startup_manager
+from app.discord_api import register_discord_routes
+from app.discord_settings import get_discord_settings_controller
 from config.settings import get_settings, reset_settings, update_settings
 from config.settings_validation import SettingsValidationError, validate_settings_changes
 
@@ -616,10 +620,18 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        discord_controller = (
+            get_discord_settings_controller() if runtime is None else None
+        )
         application.state.runtime = backend_runtime
+        if discord_controller is not None:
+            application.state.discord_controller = discord_controller
+            discord_controller.start_if_enabled()
         try:
             yield
         finally:
+            if discord_controller is not None:
+                discord_controller.shutdown()
             backend_runtime.shutdown()
 
     application = FastAPI(
@@ -1692,6 +1704,10 @@ def create_app(runtime: BackendRuntime | None = None) -> FastAPI:
             restart_required=restart_required,
         )
 
+    register_discord_routes(
+        application,
+        Path(__file__).resolve().parents[1] / "web" / "discord",
+    )
     return application
 
 
