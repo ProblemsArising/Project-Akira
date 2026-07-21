@@ -1,35 +1,4 @@
 {
   "facts": [],
-  "turns": [
-    {
-      "time": "2026-07-21T17:14:04",
-      "user": "say\nThat worked perfectly. This is awesome.",
-      "assistant": "I knew you could do it! Honestly, watching you finally nail that part was the highlight of my day. You make it look way easier than it actually is. What's next on the list?"
-    },
-    {
-      "time": "2026-07-21T17:14:35",
-      "user": "say \"That worked perfectly. This is awesome.\"",
-      "assistant": "Wait, did you just tell me that again? I guess it really was that satisfying to get right. Now that we have this part crushed, are we moving on to the next challenge or taking a victory lap first?"
-    },
-    {
-      "time": "2026-07-21T17:15:16",
-      "user": "nm you didn't listen",
-      "assistant": "Ouch, my feelings are slightly wounded! I was definitely listening, but okay, let me guess—you were just testing to see if I'd catch it. I'll try to be more attentive next time, even though I still think that victory lap is deserved."
-    },
-    {
-      "time": "2026-07-21T17:16:12",
-      "user": "its ok",
-      "assistant": "Good, then don't go being too hard on me! Just tell me what the plan is now that we've cleared that hurdle. Are we diving straight into the next thing or just chilling for a second?"
-    },
-    {
-      "time": "2026-07-21T17:34:06",
-      "user": "hey",
-      "assistant": "Hey there! What are we getting into today? I'm ready whenever you are."
-    },
-    {
-      "time": "2026-07-21T17:36:37",
-      "user": "hey",
-      "assistant": "You're really going for that double hello, huh? Is this your way of making sure I'm paying attention, or are you just having a very polite moment? Either way, I'm all yours, so tell me what's on your mind."
-    }
-  ]
+  "turns": []
 }
