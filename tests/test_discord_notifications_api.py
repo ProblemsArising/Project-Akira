@@ -9,7 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.discord_api import register_discord_routes
-from app.discord_notifications import DiscordNotificationReport
+from app.discord_errors import DiscordRateLimitedError
+from app.discord_notifications import (
+    DiscordNotificationDeliveryFailed,
+    DiscordNotificationReport,
+)
 
 
 class FakeNotificationService:
@@ -64,6 +68,8 @@ class DiscordNotificationApiTests(unittest.TestCase):
                 "recipient_count": 2,
                 "message_parts": 1,
                 "messages_sent": 2,
+                "messages_failed": 0,
+                "partial_failure": False,
             },
         )
         self.assertEqual(self.service.calls[0]["user_ids"], None)
@@ -105,6 +111,48 @@ class DiscordNotificationApiTests(unittest.TestCase):
         )
         self.assertEqual(unavailable.status_code, 503)
         self.assertNotIn("secret gateway failure", unavailable.text)
+
+    def test_partial_delivery_counts_are_returned(self):
+        self.service.send = lambda *args, **kwargs: DiscordNotificationReport(
+            recipient_count=2,
+            message_parts=1,
+            messages_sent=1,
+            messages_failed=1,
+        )
+
+        response = self.client.post(
+            "/api/discord/notifications",
+            json={"message": "Hello"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["messages_failed"], 1)
+        self.assertTrue(response.json()["partial_failure"])
+
+    def test_rate_limit_returns_429_and_retry_after(self):
+        self.service.error = DiscordRateLimitedError(2.2)
+
+        response = self.client.post(
+            "/api/discord/notifications",
+            json={"message": "Hello"},
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["retry-after"], "3")
+        self.assertNotIn("secret", response.text)
+
+    def test_total_delivery_failure_returns_safe_503(self):
+        self.service.error = DiscordNotificationDeliveryFailed(
+            messages_failed=2
+        )
+
+        response = self.client.post(
+            "/api/discord/notifications",
+            json={"message": "Hello"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("2", response.json()["detail"])
 
 
 if __name__ == "__main__":

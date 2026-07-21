@@ -8,7 +8,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.discord_errors import DiscordRateLimitedError
 from app.discord_notifications import (
+    DiscordNotificationDeliveryFailed,
     DiscordNotificationReport,
     DiscordNotificationService,
     get_discord_notification_service,
@@ -59,6 +61,8 @@ class DiscordNotificationResponse(StrictModel):
     recipient_count: int
     message_parts: int
     messages_sent: int
+    messages_failed: int
+    partial_failure: bool
 
 
 def _controller(request: Request) -> DiscordSettingsController:
@@ -93,6 +97,18 @@ def _response(snapshot: DiscordSettingsSnapshot) -> DiscordSettingsResponse:
 def _discord_error(error: Exception) -> HTTPException:
     if isinstance(error, ValueError):
         return HTTPException(status_code=422, detail=str(error))
+    if isinstance(error, DiscordRateLimitedError):
+        retry_after = max(1, int(error.retry_after + 0.999))
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Discord remote messaging is temporarily rate limited.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    if isinstance(error, DiscordNotificationDeliveryFailed):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Discord could not deliver the notification.",
+        )
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Discord remote messaging could not complete that operation.",
@@ -169,6 +185,8 @@ def send_discord_notification(
         recipient_count=report.recipient_count,
         message_parts=report.message_parts,
         messages_sent=report.messages_sent,
+        messages_failed=report.messages_failed,
+        partial_failure=report.partial_failure,
     )
 
 

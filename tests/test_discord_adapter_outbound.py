@@ -4,6 +4,11 @@ import asyncio
 import threading
 import unittest
 
+from app.discord_errors import (
+    DiscordPermissionError,
+    DiscordRateLimitedError,
+)
+
 from app.discord_adapter import (
     DiscordAdapterService,
     DiscordGatewayEvent,
@@ -11,12 +16,22 @@ from app.discord_adapter import (
 
 
 class FakeUser:
-    def __init__(self, user_id):
+    def __init__(self, user_id, error=None):
         self.id = user_id
         self.sent = []
+        self.error = error
 
     async def send(self, content):
+        if self.error is not None:
+            raise self.error
         self.sent.append(content)
+
+
+class FakeHttpError(Exception):
+    def __init__(self, status, retry_after=None):
+        super().__init__("secret discord response")
+        self.status = status
+        self.retry_after = retry_after
 
 
 class FakeOutboundClient:
@@ -96,6 +111,22 @@ class DiscordAdapterOutboundTests(unittest.TestCase):
             self.service.send_direct_message(123, "x" * 2_001)
         with self.assertRaisesRegex(ValueError, "greater than zero"):
             self.service.send_direct_message(123, "Hello", timeout=0)
+
+    def test_send_classifies_permission_and_rate_limit_errors(self):
+        self.service.record_gateway_event(DiscordGatewayEvent.READY)
+
+        self.client.cached_users[123] = FakeUser(
+            123, error=FakeHttpError(403)
+        )
+        with self.assertRaises(DiscordPermissionError):
+            self.service.send_direct_message(123, "Hello", timeout=1)
+
+        self.client.cached_users[456] = FakeUser(
+            456, error=FakeHttpError(429, retry_after=2.0)
+        )
+        with self.assertRaises(DiscordRateLimitedError) as context:
+            self.service.send_direct_message(456, "Hello", timeout=1)
+        self.assertEqual(context.exception.retry_after, 2.0)
 
 
 if __name__ == "__main__":
