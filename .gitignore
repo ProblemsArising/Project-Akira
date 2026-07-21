@@ -29,3 +29,5 @@ data/calibration_sample.wav
 /dist/
 *.manifest
 
+data/discord_settings.json
+data/discord_conversations.json
