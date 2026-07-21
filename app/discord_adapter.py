@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Protocol
 
+from app.discord_errors import (
+    DiscordUnavailableError,
+    classify_discord_delivery_error,
+)
+
 
 class DiscordClient(Protocol):
     """Minimum async client API required by ``DiscordAdapterService``."""
@@ -387,9 +392,9 @@ class DiscordAdapterService:
             future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as error:
             future.cancel()
-            raise TimeoutError(
-                "Discord direct message delivery timed out"
-            ) from error
+            raise DiscordUnavailableError() from error
+        except Exception as error:
+            raise classify_discord_delivery_error(error) from error
 
     def record_gateway_event(
         self,

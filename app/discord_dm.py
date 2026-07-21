@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Callable, Protocol
 
 from app.discord_access import DiscordAccessPolicy, get_discord_access_policy
 from app.discord_commands import DiscordCommandRouter
+from app.discord_rate_limit import DiscordRateLimiter
 from app.discord_conversations import (
     DiscordConversationSessions,
     get_discord_conversation_sessions,
@@ -25,6 +26,11 @@ from app.discord_conversations import (
 
 DISCORD_MESSAGE_LIMIT = 2_000
 DEFAULT_FAILURE_REPLY = "Project Akira could not process that message."
+DEFAULT_RATE_LIMIT_REPLY = (
+    "You are sending Discord messages too quickly. Try again in {seconds} seconds."
+)
+DEFAULT_DM_RATE_LIMIT = 5
+DEFAULT_DM_RATE_WINDOW_SECONDS = 10.0
 
 
 class ConversationResultLike(Protocol):
@@ -52,6 +58,7 @@ class DiscordDMOutcome(str, Enum):
     IGNORED_BOT = "ignored_bot"
     IGNORED_EMPTY = "ignored_empty"
     DENIED = "denied"
+    RATE_LIMITED = "rate_limited"
     FAILED = "failed"
 
 
@@ -120,6 +127,7 @@ class DiscordDMHandler:
         conversation_sessions: DiscordConversationSessions | None = None,
         command_router: DiscordCommandRouter | None = None,
         failure_reply: str = DEFAULT_FAILURE_REPLY,
+        rate_limiter: DiscordRateLimiter | None = None,
     ) -> None:
         normalized_failure = str(failure_reply).strip()
         if not normalized_failure:
@@ -144,6 +152,10 @@ class DiscordDMHandler:
             access_policy=self._access_policy,
         )
         self._failure_reply = normalized_failure
+        self._rate_limiter = rate_limiter or DiscordRateLimiter(
+            limit=DEFAULT_DM_RATE_LIMIT,
+            window_seconds=DEFAULT_DM_RATE_WINDOW_SECONDS,
+        )
 
     async def handle_message(self, message: Any) -> DiscordDMResult:
         if getattr(message, "guild", None) is not None:
@@ -165,6 +177,19 @@ class DiscordDMHandler:
         if not callable(send):
             return DiscordDMResult(DiscordDMOutcome.FAILED)
 
+        user_id = getattr(author, "id", author)
+        decision = self._rate_limiter.consume(user_id)
+        if not decision.allowed:
+            seconds = self._rate_limiter.retry_after_seconds(decision)
+            sent = await self._safe_send(
+                send,
+                DEFAULT_RATE_LIMIT_REPLY.format(seconds=seconds),
+            )
+            return DiscordDMResult(
+                DiscordDMOutcome.RATE_LIMITED,
+                reply_parts=int(sent),
+            )
+
         try:
             command_result = await asyncio.to_thread(
                 self._command_router.handle,
@@ -172,15 +197,15 @@ class DiscordDMHandler:
                 content,
             )
             if command_result is not None:
-                parts = split_discord_message(command_result.reply)
-                for part in parts:
-                    await send(part)
-                if command_result.stop_after_reply:
+                sent = await self._send_parts(send, command_result.reply)
+                if command_result.stop_after_reply and sent:
                     self._command_router.schedule_stop()
-                return DiscordDMResult(
-                    DiscordDMOutcome.COMMAND,
-                    reply_parts=len(parts),
+                outcome = (
+                    DiscordDMOutcome.COMMAND
+                    if sent
+                    else DiscordDMOutcome.FAILED
                 )
+                return DiscordDMResult(outcome, reply_parts=sent)
 
             async with _typing_indicator(channel):
                 result = await asyncio.to_thread(
@@ -192,20 +217,42 @@ class DiscordDMHandler:
                 )
 
             reply = "" if result is None else str(result.reply).strip()
-            parts = split_discord_message(reply or self._failure_reply)
-            for part in parts:
-                await send(part)
-
-            return DiscordDMResult(
-                DiscordDMOutcome.REPLIED,
-                reply_parts=len(parts),
+            sent = await self._send_parts(
+                send,
+                reply or self._failure_reply,
             )
+            outcome = (
+                DiscordDMOutcome.REPLIED
+                if sent
+                else DiscordDMOutcome.FAILED
+            )
+            return DiscordDMResult(outcome, reply_parts=sent)
         except Exception:
-            await send(self._failure_reply)
+            sent = await self._safe_send(send, self._failure_reply)
             return DiscordDMResult(
                 DiscordDMOutcome.FAILED,
-                reply_parts=1,
+                reply_parts=int(sent),
             )
+
+    @staticmethod
+    async def _safe_send(send: Callable[[str], Any], content: str) -> bool:
+        try:
+            await send(content)
+        except Exception:
+            return False
+        return True
+
+    async def _send_parts(
+        self,
+        send: Callable[[str], Any],
+        content: str,
+    ) -> int:
+        sent = 0
+        for part in split_discord_message(content):
+            if not await self._safe_send(send, part):
+                break
+            sent += 1
+        return sent
 
     async def __call__(self, message: Any) -> DiscordDMResult:
         return await self.handle_message(message)

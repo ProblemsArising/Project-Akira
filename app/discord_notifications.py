@@ -1,13 +1,4 @@
-"""Outbound Discord notifications for Project Akira.
-
-The notification service sends local application events to one or more
-configured Discord users without routing the message through the LLM. Explicit
-recipients must already be present in the default-deny Discord access policy;
-omitting recipients broadcasts to every allowed user.
-
-Rate-limit retries and richer delivery-error classification are intentionally
-left to issue #76.
-"""
+"""Rate-limited outbound Discord notifications for Project Akira."""
 
 from __future__ import annotations
 
@@ -21,20 +12,22 @@ from app.discord_access import (
     get_discord_access_policy,
     normalize_discord_user_id,
 )
-from app.discord_adapter import (
-    DiscordAdapterService,
-    get_discord_adapter_service,
-)
+from app.discord_adapter import get_discord_adapter_service
 from app.discord_dm import split_discord_message
+from app.discord_errors import (
+    DiscordDeliveryError,
+    DiscordRateLimitedError,
+)
+from app.discord_rate_limit import DiscordRateLimiter
 
 
 MAX_NOTIFICATION_LENGTH = 20_000
 MAX_NOTIFICATION_RECIPIENTS = 100
+DEFAULT_NOTIFICATION_MESSAGE_LIMIT = 30
+DEFAULT_NOTIFICATION_WINDOW_SECONDS = 60.0
 
 
 class DiscordNotificationAdapter(Protocol):
-    """Adapter operation required by the notification service."""
-
     def send_direct_message(
         self,
         user_id: int,
@@ -46,24 +39,50 @@ class DiscordNotificationAdapter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DiscordNotificationReport:
-    """Non-sensitive summary of a completed outbound notification."""
+    """Non-sensitive summary of completed outbound delivery attempts."""
 
     recipient_count: int
     message_parts: int
     messages_sent: int
+    messages_failed: int = 0
+
+    @property
+    def messages_attempted(self) -> int:
+        return self.messages_sent + self.messages_failed
+
+    @property
+    def partial_failure(self) -> bool:
+        return self.messages_sent > 0 and self.messages_failed > 0
+
+
+class DiscordNotificationRateLimited(DiscordRateLimitedError):
+    """The local outbound notification budget has been exhausted."""
+
+
+class DiscordNotificationDeliveryFailed(DiscordDeliveryError):
+    """Every attempted outbound message failed safely."""
+
+    def __init__(self, *, messages_failed: int) -> None:
+        self.messages_failed = messages_failed
+        super().__init__("Discord could not deliver the notification.")
 
 
 class DiscordNotificationService:
-    """Send notifications to configured Discord users."""
+    """Send bounded notifications to configured Discord users."""
 
     def __init__(
         self,
         *,
         adapter: DiscordNotificationAdapter | None = None,
         access_policy: DiscordAccessPolicy | None = None,
+        rate_limiter: DiscordRateLimiter | None = None,
     ) -> None:
         self._adapter = adapter or get_discord_adapter_service()
         self._access_policy = access_policy or get_discord_access_policy()
+        self._rate_limiter = rate_limiter or DiscordRateLimiter(
+            limit=DEFAULT_NOTIFICATION_MESSAGE_LIMIT,
+            window_seconds=DEFAULT_NOTIFICATION_WINDOW_SECONDS,
+        )
 
     def send(
         self,
@@ -72,12 +91,7 @@ class DiscordNotificationService:
         user_ids: Iterable[object] | None = None,
         timeout: float = 10.0,
     ) -> DiscordNotificationReport:
-        """Send one notification to explicit recipients or all allowed users.
-
-        Explicit recipients are validated as an all-or-nothing set before any
-        message is sent. This prevents accidental delivery to a user outside
-        the configured allow-list.
-        """
+        """Send one notification with local throttling and partial-failure isolation."""
 
         normalized_message = str(message).strip()
         if not normalized_message:
@@ -92,19 +106,47 @@ class DiscordNotificationService:
 
         recipients = self._resolve_recipients(user_ids)
         parts = split_discord_message(normalized_message)
+        message_count = len(recipients) * len(parts)
 
+        decision = self._rate_limiter.consume(
+            "outbound_notifications",
+            cost=message_count,
+        )
+        if not decision.allowed:
+            raise DiscordNotificationRateLimited(decision.retry_after)
+
+        sent = 0
+        failed = 0
         for recipient in recipients:
             for part in parts:
-                self._adapter.send_direct_message(
-                    recipient,
-                    part,
-                    timeout=timeout,
-                )
+                try:
+                    self._adapter.send_direct_message(
+                        recipient,
+                        part,
+                        timeout=timeout,
+                    )
+                except DiscordRateLimitedError:
+                    # Stop immediately: a surfaced remote rate limit can apply
+                    # beyond one recipient. discord.py normally handles 429s
+                    # internally, but this remains safe when it cannot wait.
+                    raise
+                except DiscordDeliveryError:
+                    failed += 1
+                except Exception:
+                    # Adapter implementations injected by extensions/tests are
+                    # isolated without exposing their raw exception text.
+                    failed += 1
+                else:
+                    sent += 1
+
+        if sent == 0 and failed:
+            raise DiscordNotificationDeliveryFailed(messages_failed=failed)
 
         return DiscordNotificationReport(
             recipient_count=len(recipients),
             message_parts=len(parts),
-            messages_sent=len(recipients) * len(parts),
+            messages_sent=sent,
+            messages_failed=failed,
         )
 
     def _resolve_recipients(
@@ -144,8 +186,6 @@ _DEFAULT_NOTIFICATION_SERVICE_LOCK = threading.Lock()
 
 
 def get_discord_notification_service() -> DiscordNotificationService:
-    """Return the process-wide outbound notification service."""
-
     global _DEFAULT_NOTIFICATION_SERVICE
     with _DEFAULT_NOTIFICATION_SERVICE_LOCK:
         if _DEFAULT_NOTIFICATION_SERVICE is None:
