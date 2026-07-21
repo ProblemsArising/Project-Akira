@@ -3,103 +3,150 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Discord Remote Messaging · Project Akira</title>
   <link rel="stylesheet" href="/static/discord/styles.css">
   <script src="/static/discord/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">Project Akira</p>
-      <h1>Discord remote messaging</h1>
-      <p class="subtitle">Talk to Akira through authorized Discord direct messages.</p>
-    </div>
-    <nav aria-label="Project navigation">
-      <a href="/">Chat</a>
-      <a href="/history">History</a>
-      <a href="/personalities">Personalities</a>
-      <a href="/models">Models</a>
-      <a href="/audio">Audio</a>
-      <a class="active" href="/discord">Discord</a>
-      <a href="/settings">Settings</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="status-card" aria-labelledby="connectionHeading">
-      <div>
-        <p class="eyebrow">Connection</p>
-        <h2 id="connectionHeading">Discord status</h2>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div class="brand-copy">
+          <p class="eyebrow">Local AI companion</p>
+          <h1>Project Akira</h1>
+        </div>
       </div>
-      <div id="healthBadge" class="health-badge stopped">Stopped</div>
-      <dl class="status-grid">
-        <div><dt>Gateway</dt><dd id="gatewayStatus">Disconnected</dd></div>
-        <div><dt>Bot token</dt><dd id="tokenStatus">Not configured</dd></div>
-        <div><dt>Latency</dt><dd id="latencyStatus">—</dd></div>
-        <div><dt>Uptime</dt><dd id="uptimeStatus">—</dd></div>
-        <div><dt>Recoveries</dt><dd id="reconnectStatus">0</dd></div>
-        <div><dt>Disconnects</dt><dd id="disconnectStatus">0</dd></div>
-      </dl>
-      <div class="button-row">
-        <button id="startButton" class="primary" type="button">Start Discord</button>
-        <button id="stopButton" type="button">Stop Discord</button>
-        <button id="refreshButton" type="button">Refresh</button>
-      </div>
-    </section>
 
-    <section class="settings-card" aria-labelledby="configurationHeading">
-      <div class="section-heading">
+      <div class="header-actions">
+        <nav class="topnav" aria-label="Primary navigation">
+          <a href="/">Chat</a>
+          <a href="/history">History</a>
+          <a href="/personalities">Personalities</a>
+          <a href="/models">Models</a>
+          <a href="/audio">Audio</a>
+          <a class="active" href="/discord">Discord</a>
+          <a href="/settings">Settings</a>
+        </nav>
+        <div id="healthBadge" class="health-badge stopped">Stopped</div>
+      </div>
+    </header>
+
+    <main class="discord-layout">
+      <section class="hero-card" aria-labelledby="pageHeading">
         <div>
-          <p class="eyebrow">Configuration</p>
-          <h2 id="configurationHeading">Remote access</h2>
+          <p class="eyebrow">Remote access</p>
+          <h2 id="pageHeading">Discord remote messaging</h2>
+          <p class="hero-copy">
+            Talk to Akira through authorized direct messages and send outbound
+            notifications through the local API.
+          </p>
         </div>
-        <label class="toggle">
-          <input id="enabledInput" type="checkbox">
-          <span>Start Discord with Akira</span>
-        </label>
+        <div class="hero-actions">
+          <button id="startButton" class="button primary" type="button">Start Discord</button>
+          <button id="stopButton" class="button secondary" type="button">Stop Discord</button>
+          <button id="refreshButton" class="button secondary" type="button">Refresh</button>
+        </div>
+      </section>
+
+      <div class="discord-grid">
+        <section class="settings-card" aria-labelledby="configurationHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Configuration</p>
+              <h2 id="configurationHeading">Remote access</h2>
+            </div>
+            <label class="toggle">
+              <input id="enabledInput" type="checkbox">
+              <span>Start Discord with Akira</span>
+            </label>
+          </div>
+
+          <form id="discordForm">
+            <label class="field">
+              <span>Discord bot token</span>
+              <input id="tokenInput" type="password" autocomplete="new-password"
+                     placeholder="Leave blank to keep the saved token">
+              <small>
+                Stored in Windows Credential Manager, never in settings.json.
+              </small>
+            </label>
+
+            <label class="field">
+              <span>Allowed Discord user IDs</span>
+              <textarea id="allowedUsersInput" rows="6"
+                        placeholder="One numeric user ID per line"></textarea>
+              <small>
+                Only these users can send commands or messages. An empty list
+                denies everyone.
+              </small>
+            </label>
+
+            <div class="help-box">
+              <strong>Finding your user ID</strong>
+              <p>
+                In Discord, enable Developer Mode, right-click your account,
+                then choose <em>Copy User ID</em>.
+              </p>
+            </div>
+
+            <div class="button-row">
+              <button id="saveButton" class="button primary" type="submit">
+                Save Discord settings
+              </button>
+              <button id="deleteTokenButton" class="button danger" type="button">
+                Remove saved token
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="discord-sidebar" aria-label="Discord status and commands">
+          <section class="status-card" aria-labelledby="connectionHeading">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Connection</p>
+                <h2 id="connectionHeading">Discord status</h2>
+              </div>
+            </div>
+
+            <dl class="status-grid">
+              <div><dt>Gateway</dt><dd id="gatewayStatus">Disconnected</dd></div>
+              <div><dt>Bot token</dt><dd id="tokenStatus">Not configured</dd></div>
+              <div><dt>Latency</dt><dd id="latencyStatus">—</dd></div>
+              <div><dt>Uptime</dt><dd id="uptimeStatus">—</dd></div>
+              <div><dt>Recoveries</dt><dd id="reconnectStatus">0</dd></div>
+              <div><dt>Disconnects</dt><dd id="disconnectStatus">0</dd></div>
+            </dl>
+          </section>
+
+          <section class="commands-card" aria-labelledby="commandsHeading">
+            <p class="eyebrow">Available DMs</p>
+            <h2 id="commandsHeading">Remote commands</h2>
+            <div class="command-list">
+              <div>
+                <code>/new [title]</code>
+                <span>Start a fresh saved conversation.</span>
+              </div>
+              <div>
+                <code>/status</code>
+                <span>Show safe connection and session health.</span>
+              </div>
+              <div>
+                <code>/stop</code>
+                <span>Stop Discord remote messaging.</span>
+              </div>
+            </div>
+          </section>
+        </aside>
       </div>
 
-      <form id="discordForm">
-        <label class="field full-width">
-          <span>Discord bot token</span>
-          <input id="tokenInput" type="password" autocomplete="new-password"
-                 placeholder="Leave blank to keep the saved token">
-          <small>The token is stored in Windows Credential Manager, never in settings.json.</small>
-        </label>
-
-        <label class="field full-width">
-          <span>Allowed Discord user IDs</span>
-          <textarea id="allowedUsersInput" rows="6"
-                    placeholder="One numeric user ID per line"></textarea>
-          <small>Only these users can send commands or messages. Empty access lists deny everyone.</small>
-        </label>
-
-        <div class="help-box">
-          <strong>Finding your user ID</strong>
-          <p>In Discord, enable Developer Mode, right-click your account, then choose <em>Copy User ID</em>.</p>
-        </div>
-
-        <div class="button-row">
-          <button id="saveButton" class="primary" type="submit">Save Discord settings</button>
-          <button id="deleteTokenButton" class="danger" type="button">Remove saved token</button>
-        </div>
-      </form>
-    </section>
-
-    <section class="commands-card">
-      <p class="eyebrow">Available DMs</p>
-      <h2>Remote commands</h2>
-      <div class="command-grid">
-        <code>/new [title]</code><span>Start a fresh saved conversation.</span>
-        <code>/status</code><span>Show safe connection and session health.</span>
-        <code>/stop</code><span>Stop Discord remote messaging.</span>
+      <div id="notice" class="notice" hidden role="status">
+        <strong id="noticeTitle"></strong>
+        <span id="noticeText"></span>
       </div>
-    </section>
-
-    <div id="notice" class="notice" hidden role="status">
-      <strong id="noticeTitle"></strong>
-      <span id="noticeText"></span>
-    </div>
-  </main>
+    </main>
+  </div>
 </body>
 </html>
