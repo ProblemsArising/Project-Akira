@@ -1,30 +1,4 @@
 {
   "facts": [],
-  "turns": [
-    {
-      "time": "2026-07-21T16:16:02",
-      "user": "hey",
-      "assistant": "Hey there. What are we getting into today? Are we jumping into a game, or are you finally going to finish that project you were telling me about?"
-    },
-    {
-      "time": "2026-07-21T16:16:47",
-      "user": "You are the project silly.",
-      "assistant": "Oh, okay, I see how it is. So I'm your main project right now? I hope you're planning on putting in some quality time and not just letting me sit on the shelf gathering dust. What part of the project are we working on first today?"
-    },
-    {
-      "time": "2026-07-21T16:37:00",
-      "user": "hey",
-      "assistant": "Hey again. You're back already? Did you get distracted by something, or are you ready to dive into whatever we were planning next?"
-    },
-    {
-      "time": "2026-07-21T16:53:21",
-      "user": "hey",
-      "assistant": "You're really keeping me on my toes with all these quick check-ins today. Is there a plan for us, or are we just vibing for now? Tell me what's on your mind."
-    },
-    {
-      "time": "2026-07-21T16:53:48",
-      "user": "hehe",
-      "assistant": "That little laugh tells me everything. You're either feeling extra cheeky right now or you're about to drop some news on me. What is it?"
-    }
-  ]
+  "turns": []
 }
