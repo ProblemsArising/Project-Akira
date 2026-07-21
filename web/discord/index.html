@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Discord Remote Messaging · Project Akira</title>
   <link rel="stylesheet" href="/static/discord/styles.css">
+  <link rel="stylesheet" href="/static/discord/setup-guide.css">
   <script src="/static/discord/app.js" defer></script>
 </head>
 <body>
@@ -49,6 +50,115 @@
           <button id="refreshButton" class="button secondary" type="button">Refresh</button>
         </div>
       </section>
+
+      <details class="setup-guide" open>
+        <summary>
+          <span>
+            <span class="eyebrow">First-time setup</span>
+            <strong>Create your Discord bot</strong>
+          </span>
+          <span class="summary-hint">About five minutes</span>
+        </summary>
+
+        <div class="setup-intro">
+          <p>
+            Project Akira connects through a Discord bot owned by you. Akira
+            does not operate a shared cloud bot, and your token remains in the
+            Windows credential store on this computer.
+          </p>
+          <div class="setup-actions">
+            <a class="button primary"
+               href="https://discord.com/developers/applications"
+               target="_blank"
+               rel="noopener noreferrer">
+              Open Discord Developer Portal
+            </a>
+            <a class="button secondary"
+               href="https://docs.discord.com/developers/quick-start/getting-started"
+               target="_blank"
+               rel="noopener noreferrer">
+              Discord setup reference
+            </a>
+          </div>
+        </div>
+
+        <ol class="setup-steps">
+          <li>
+            <div class="step-number" aria-hidden="true">1</div>
+            <div>
+              <h3>Create the application and token</h3>
+              <p>
+                Create an application named <strong>Akira</strong>. Open
+                <strong>Bot</strong>, choose <strong>Reset Token</strong>, and
+                copy the new token. Discord will not show it again unless you
+                reset it.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div class="step-number" aria-hidden="true">2</div>
+            <div>
+              <h3>Configure installation</h3>
+              <p>
+                Open <strong>Installation</strong>, enable
+                <strong>Guild Install</strong>, and choose
+                <strong>Discord Provided Link</strong>. Under Guild Install,
+                add the <code>bot</code> and
+                <code>applications.commands</code> scopes, then grant
+                <strong>Send Messages</strong>.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div class="step-number" aria-hidden="true">3</div>
+            <div>
+              <h3>Add Akira to Discord</h3>
+              <p>
+                Copy the installation link, open it in your browser, choose
+                <strong>Add to server</strong>, and select a private or test
+                server. Open a direct message with Akira from the server member
+                list.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div class="step-number" aria-hidden="true">4</div>
+            <div>
+              <h3>Copy your Discord user ID</h3>
+              <p>
+                In Discord, open <strong>User Settings → Advanced</strong> and
+                enable <strong>Developer Mode</strong>. Right-click your account
+                and choose <strong>Copy User ID</strong>.
+              </p>
+              <a class="inline-link"
+                 href="https://support.discord.com/hc/en-us/articles/206346498-Where-can-I-find-my-User-Server-Message-ID"
+                 target="_blank"
+                 rel="noopener noreferrer">
+                Official user-ID instructions
+              </a>
+            </div>
+          </li>
+          <li>
+            <div class="step-number" aria-hidden="true">5</div>
+            <div>
+              <h3>Connect Project Akira</h3>
+              <p>
+                Paste the bot token and your user ID below. Enable
+                <strong>Start Discord with Akira</strong>, save the settings,
+                and wait for <strong>Healthy</strong> and
+                <strong>Ready</strong>.
+              </p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="token-warning">
+          <strong>Keep the bot token private.</strong>
+          Never paste it into chat, screenshots, commits, issues, or pull
+          requests. Reset it immediately in the Developer Portal if it is ever
+          exposed.
+        </div>
+      </details>
 
       <div class="discord-grid">
         <section class="settings-card" aria-labelledby="configurationHeading">
