@@ -339,6 +339,58 @@ class DiscordAdapterService:
 
         return self._stopped_event.wait(timeout=timeout)
 
+    def send_direct_message(
+        self,
+        user_id: int,
+        content: str,
+        *,
+        timeout: float = 10.0,
+    ) -> None:
+        """Send one Discord-safe message from a non-async caller.
+
+        The coroutine is scheduled on the adapter's existing gateway event
+        loop. The adapter must be running and the Discord gateway must be
+        ready before outbound delivery is accepted.
+        """
+
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            raise ValueError("Discord user ID must be a positive integer")
+
+        normalized_content = str(content).strip()
+        if not normalized_content:
+            raise ValueError("Discord direct message cannot be blank")
+        if len(normalized_content) > 2_000:
+            raise ValueError("Discord direct message cannot exceed 2000 characters")
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+
+        with self._lock:
+            loop = self._loop
+            client = self._client
+            state = self._state
+            ready = self._ready
+
+        if (
+            state is not DiscordAdapterState.RUNNING
+            or not ready
+            or loop is None
+            or client is None
+            or not loop.is_running()
+        ):
+            raise RuntimeError("Discord remote messaging is not ready")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_direct_message(client, user_id, normalized_content),
+            loop,
+        )
+        try:
+            future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as error:
+            future.cancel()
+            raise TimeoutError(
+                "Discord direct message delivery timed out"
+            ) from error
+
     def record_gateway_event(
         self,
         event: DiscordGatewayEvent | str,
@@ -415,6 +467,26 @@ class DiscordAdapterService:
             await client.start(token, reconnect=True)
         finally:
             await self._close_client(client)
+
+    @staticmethod
+    async def _send_direct_message(
+        client: DiscordClient,
+        user_id: int,
+        content: str,
+    ) -> None:
+        get_user = getattr(client, "get_user", None)
+        user = get_user(user_id) if callable(get_user) else None
+
+        if user is None:
+            fetch_user = getattr(client, "fetch_user", None)
+            if not callable(fetch_user):
+                raise RuntimeError("Discord client cannot resolve users")
+            user = await fetch_user(user_id)
+
+        send = getattr(user, "send", None)
+        if not callable(send):
+            raise RuntimeError("Discord user cannot receive direct messages")
+        await send(content)
 
     @staticmethod
     async def _close_client(client: DiscordClient) -> None:
