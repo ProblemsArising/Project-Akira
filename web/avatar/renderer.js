@@ -2,6 +2,7 @@ import * as THREE from "./vendor/three/three.module.min.js";
 import { GLTFLoader } from "./vendor/three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "./vendor/three-vrm/three-vrm.module.min.js";
 import { EmbeddedIdleMotion } from "./idle.js";
+import { EmbeddedBodyPose } from "./poses.js";
 
 const FACE_EXPRESSION_ALIASES = Object.freeze({
   happy: Object.freeze(["happy", "joy", "smile"]),
@@ -48,6 +49,7 @@ export class EmbeddedVRMRenderer {
     this.mouthCurrent = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     this.mouthTarget = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
     this.idleMotion = new EmbeddedIdleMotion();
+    this.bodyPose = new EmbeddedBodyPose();
     this.idleRig = null;
     this.idleEuler = new THREE.Euler(0, 0, 0, "XYZ");
     this.idleQuaternion = new THREE.Quaternion();
@@ -129,6 +131,7 @@ export class EmbeddedVRMRenderer {
     VRMUtils.rotateVRM0(vrm);
     this.currentVrm = vrm;
     this._captureIdleRig();
+    this.bodyPose.reset();
     this._refreshExpressionBindings();
     this.clearFaceExpression(true);
     this.closeMouth(true);
@@ -140,6 +143,28 @@ export class EmbeddedVRMRenderer {
 
   configureIdle(settings = {}) {
     this.idleMotion.configure(settings);
+  }
+
+  configureBodyPose(settings = {}) {
+    this.bodyPose.configure(settings);
+  }
+
+  setBodyPose(expression = {}) {
+    this.bodyPose.setExpression(expression);
+    return Boolean(this.idleRig);
+  }
+
+  clearBodyPose(immediate = false) {
+    this.bodyPose.clear(immediate);
+  }
+
+  getBodyPoseCapabilities() {
+    if (!this.idleRig) return { enabled: false, bones: [] };
+    return {
+      enabled: this.bodyPose.settings.standingEnabled
+        || this.bodyPose.settings.expressionsEnabled,
+      bones: Object.keys(this.idleRig.bones),
+    };
   }
 
   setSpeaking(speaking) {
@@ -174,6 +199,8 @@ export class EmbeddedVRMRenderer {
       "rightUpperArm",
       "leftLowerArm",
       "rightLowerArm",
+      "leftHand",
+      "rightHand",
     ];
     const bones = {};
     for (const name of boneNames) {
@@ -199,20 +226,33 @@ export class EmbeddedVRMRenderer {
 
   _updateIdleMovement(delta) {
     if (!this.idleRig) return;
-    const sample = this.idleMotion.update(delta);
+    const idleSample = this.idleMotion.update(delta);
+    const poseSample = this.bodyPose.update(delta);
+    const idleScale = this.bodyPose.idleScale();
     const root = this.idleRig.root;
     root.node.position.set(
-      root.position.x + sample.rootPosition.x,
-      root.position.y + sample.rootPosition.y,
-      root.position.z + sample.rootPosition.z,
+      root.position.x
+        + poseSample.rootPosition.x
+        + idleSample.rootPosition.x * idleScale,
+      root.position.y
+        + poseSample.rootPosition.y
+        + idleSample.rootPosition.y * idleScale,
+      root.position.z
+        + poseSample.rootPosition.z
+        + idleSample.rootPosition.z * idleScale,
     );
     root.node.quaternion.copy(root.quaternion);
 
     for (const [name, binding] of Object.entries(this.idleRig.bones)) {
-      const offset = sample.bones[name];
-      if (!offset) continue;
+      const idleOffset = idleSample.bones[name] || { x: 0, y: 0, z: 0 };
+      const poseOffset = poseSample.bones[name] || { x: 0, y: 0, z: 0 };
       binding.node.position.copy(binding.position);
-      this.idleEuler.set(offset.x, offset.y, offset.z, "XYZ");
+      this.idleEuler.set(
+        poseOffset.x + idleOffset.x * idleScale,
+        poseOffset.y + idleOffset.y * idleScale,
+        poseOffset.z + idleOffset.z * idleScale,
+        "XYZ",
+      );
       this.idleQuaternion.setFromEuler(this.idleEuler);
       binding.node.quaternion
         .copy(binding.quaternion)
@@ -230,6 +270,7 @@ export class EmbeddedVRMRenderer {
       binding.node.quaternion.copy(binding.quaternion);
     }
     this.idleMotion.reset();
+    this.bodyPose.reset();
   }
 
   configureFace(settings = {}) {
@@ -468,6 +509,7 @@ export class EmbeddedVRMRenderer {
     this.loadToken += 1;
     this.clearFaceExpression(true);
     this.closeMouth(true);
+    this.clearBodyPose(true);
     this._resetIdleRig();
     if (!this.currentVrm) {
       this.idleRig = null;

@@ -1,6 +1,7 @@
 import { EmbeddedVRMRenderer } from "/static/avatar/renderer.js";
 import { TextExpressionPlayer } from "/static/avatar/expressions.js";
 import { TextVisemePlayer } from "/static/avatar/visemes.js";
+import { TextBodyPosePlayer } from "/static/avatar/poses.js";
 
 window.__akiraAvatarAppStarted = true;
 
@@ -43,10 +44,12 @@ const COPY = {
 let embeddedRenderer = null;
 let expressionPlayer = null;
 let visemePlayer = null;
+let bodyPosePlayer = null;
 try {
   embeddedRenderer = new EmbeddedVRMRenderer(elements.rendererHost);
   expressionPlayer = new TextExpressionPlayer(embeddedRenderer);
   visemePlayer = new TextVisemePlayer(embeddedRenderer);
+  bodyPosePlayer = new TextBodyPosePlayer(embeddedRenderer);
 } catch (error) {
   console.error("Embedded VRM renderer could not start", error);
   showModelNotice("WebGL is unavailable. The VMC backend can still be used.", true);
@@ -104,7 +107,7 @@ async function readJson(response) {
 }
 
 async function syncAvatarSettings() {
-  if (!visemePlayer && !expressionPlayer && !embeddedRenderer) return;
+  if (!visemePlayer && !expressionPlayer && !bodyPosePlayer && !embeddedRenderer) return;
   try {
     const payload = await readJson(await fetch("/api/settings", { cache: "no-store" }));
     const rootSettings = payload.settings || {};
@@ -113,6 +116,7 @@ async function syncAvatarSettings() {
       tts_rate: rootSettings.tts && rootSettings.tts.rate,
     };
     if (embeddedRenderer) embeddedRenderer.configureIdle(settings);
+    if (bodyPosePlayer) bodyPosePlayer.configure(settings);
     if (expressionPlayer) expressionPlayer.configure(settings);
     if (visemePlayer) visemePlayer.configure(settings);
   } catch (error) {
@@ -151,9 +155,11 @@ async function loadConfiguredModel(model) {
     const hasFaceExpressions = capabilities.face.length > 0;
     const idleCapabilities = embeddedRenderer.getIdleCapabilities();
     const idleLabel = idleCapabilities.enabled ? " · idle" : "";
+    const poseCapabilities = embeddedRenderer.getBodyPoseCapabilities();
+    const poseLabel = poseCapabilities.enabled ? " · poses" : "";
     elements.rendererText.textContent = hasFaceExpressions
-      ? `Embedded VRM · natural visemes + expressions${idleLabel}`
-      : `Embedded VRM · natural visemes${idleLabel} · no face presets`;
+      ? `Embedded VRM · natural visemes + expressions${idleLabel}${poseLabel}`
+      : `Embedded VRM · natural visemes${idleLabel}${poseLabel} · no face presets`;
     elements.modelText.textContent = [model.filename, versionText, sizeText]
       .filter(Boolean)
       .join(" · ");
@@ -178,6 +184,7 @@ async function loadConfiguredModel(model) {
 }
 
 function clearConfiguredModel() {
+  if (bodyPosePlayer) bodyPosePlayer.cancel(true);
   if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
   if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
@@ -290,6 +297,13 @@ function handleEvent(event) {
     case "chat.reply_ready":
       setStage(data.will_speak ? "speaking" : "idle");
       if (embeddedRenderer) embeddedRenderer.setSpeaking(Boolean(data.will_speak));
+      if (bodyPosePlayer) {
+        bodyPosePlayer.start(
+          data.expression || { preset: "soft", score: 0 },
+          data.reply || "",
+          Boolean(data.will_speak),
+        );
+      }
       if (expressionPlayer) {
         expressionPlayer.start(
           data.expression || { preset: "soft", score: 0 },
@@ -304,6 +318,7 @@ function handleEvent(event) {
       break;
     case "chat.completed":
       if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+      if (bodyPosePlayer) bodyPosePlayer.complete();
       if (expressionPlayer) expressionPlayer.complete();
       if (visemePlayer) visemePlayer.stop();
       restoreIdle();
@@ -314,6 +329,7 @@ function handleEvent(event) {
       break;
     case "chat.failed":
       if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+      if (bodyPosePlayer) bodyPosePlayer.cancel();
       if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
       setStage("error", data.error || "Akira could not complete that reply.");
@@ -329,6 +345,7 @@ function handleEvent(event) {
       break;
     case "system.shutdown":
       if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+      if (bodyPosePlayer) bodyPosePlayer.cancel();
       if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
       setConnection(false, "Server stopped");
@@ -367,6 +384,7 @@ function connect() {
 
   socket.addEventListener("close", () => {
     if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+    if (bodyPosePlayer) bodyPosePlayer.cancel();
     if (expressionPlayer) expressionPlayer.cancel();
     if (visemePlayer) visemePlayer.stop();
     if (state.socket !== socket) return;
@@ -388,6 +406,7 @@ elements.removeModelButton.addEventListener("click", removeModel);
 window.addEventListener("beforeunload", () => {
   if (state.socket) state.socket.close();
   if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+  if (bodyPosePlayer) bodyPosePlayer.cancel(true);
   if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
   if (embeddedRenderer) embeddedRenderer.dispose();
