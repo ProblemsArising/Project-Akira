@@ -29,7 +29,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,6 +49,11 @@ from app.model_backends import (
     ModelInfo,
     normalize_backend,
     normalize_base_url,
+)
+from app.model_downloads import (
+    ModelDownloadError,
+    ModelDownloadManager,
+    get_model_download_manager,
 )
 from app.paths import resource_path, user_file_path
 from app.personalities import (
@@ -70,6 +75,7 @@ HISTORY_WEB_ROOT = resource_path("web", "history")
 PERSONALITIES_WEB_ROOT = resource_path("web", "personalities")
 AUDIO_WEB_ROOT = resource_path("web", "audio")
 MODELS_WEB_ROOT = resource_path("web", "models")
+MODEL_DOWNLOADS_WEB_ROOT = resource_path("web", "model_downloads")
 AVATAR_WEB_ROOT = resource_path("web", "avatar")
 CALIBRATION_SAMPLE_PATH = user_file_path("data/calibration_sample.wav")
 
@@ -118,6 +124,7 @@ HistoryFactory = Callable[[], ChatHistoryStore]
 PersonalityFactory = Callable[[], PersonalityStore]
 CalibrationFactory = Callable[..., Any]
 ModelBackendFactory = Callable[[], ModelBackendClient]
+ModelDownloadFactory = Callable[[], ModelDownloadManager]
 
 
 class BackendRuntime:
@@ -131,6 +138,7 @@ class BackendRuntime:
         personality_factory: PersonalityFactory = get_personality_store,
         calibration_factory: CalibrationFactory | None = None,
         model_backend_factory: ModelBackendFactory | None = None,
+        model_download_factory: ModelDownloadFactory | None = None,
         event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
@@ -138,9 +146,11 @@ class BackendRuntime:
         self._personality_factory = personality_factory
         self._calibration_factory = calibration_factory
         self._model_backend_factory = model_backend_factory
+        self._model_download_factory = model_download_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
         self._personalities: PersonalityStore | None = None
+        self._model_downloads: ModelDownloadManager | None = None
         self._events = event_hub or EventHub()
         self._lock = threading.RLock()
 
@@ -234,6 +244,18 @@ class BackendRuntime:
             return self._model_backend_factory()
         return ModelBackendClient()
 
+    @property
+    def model_downloads(self) -> ModelDownloadManager:
+        """Return the process-wide managed GGUF download manager lazily."""
+
+        with self._lock:
+            if self._model_downloads is None:
+                if self._model_download_factory is not None:
+                    self._model_downloads = self._model_download_factory()
+                else:
+                    self._model_downloads = get_model_download_manager()
+            return self._model_downloads
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             service = self._service
@@ -250,10 +272,13 @@ class BackendRuntime:
     def shutdown(self) -> None:
         with self._lock:
             service = self._service
+            model_downloads = self._model_downloads
 
         self._events.publish("system.shutdown", self.status())
         if service is not None:
             service.request_stop()
+        if model_downloads is not None:
+            model_downloads.shutdown()
         self._events.close()
 
 
@@ -433,6 +458,49 @@ class ModelActionResponse(StrictModel):
     status: str
     instance_id: str | None = None
     details: dict[str, Any]
+
+
+class ModelDownloadRequest(StrictModel):
+    url: str = Field(min_length=1, max_length=10_000)
+    filename: str = Field(default="", max_length=255)
+    sha256: str = Field(default="", max_length=64)
+
+
+class ModelDownloadJobResponse(StrictModel):
+    id: str
+    url: str
+    filename: str
+    destination: str
+    status: str
+    downloaded_bytes: int
+    total_bytes: int | None
+    sha256: str | None
+    error: str | None
+    progress: float | None
+
+
+class LocalModelResponse(StrictModel):
+    filename: str
+    path: str
+    size_bytes: int
+    active: bool
+
+
+class ModelDownloadListResponse(StrictModel):
+    directory: str
+    jobs: list[ModelDownloadJobResponse]
+    models: list[LocalModelResponse]
+
+
+class LocalModelSelectionRequest(StrictModel):
+    filename: str = Field(min_length=1, max_length=255)
+
+
+class LocalModelSelectionResponse(StrictModel):
+    backend: str
+    model_path: str
+    model_alias: str
+    context_reset: bool
 
 
 class AudioDeviceResponse(StrictModel):
@@ -711,6 +779,11 @@ def create_app(
         name="models-static",
     )
     application.mount(
+        "/static/model-downloads",
+        StaticFiles(directory=MODEL_DOWNLOADS_WEB_ROOT),
+        name="model-downloads-static",
+    )
+    application.mount(
         "/static/avatar",
         StaticFiles(directory=AVATAR_WEB_ROOT),
         name="avatar-static",
@@ -768,14 +841,21 @@ def create_app(
         )
 
     @application.get("/models", include_in_schema=False)
-    def models_page() -> FileResponse:
-        """Serve the local model/backend selector."""
+    def models_page() -> HTMLResponse:
+        """Serve the model selector with the managed-download panel injected."""
 
-        return FileResponse(
-            MODELS_WEB_ROOT / "index.html",
-            media_type="text/html",
-            headers={"Cache-Control": "no-store"},
+        page = (MODELS_WEB_ROOT / "index.html").read_text(encoding="utf-8")
+        page = page.replace(
+            "</head>",
+            '  <link rel="stylesheet" href="/static/model-downloads/styles.css">\n</head>',
+            1,
         )
+        page = page.replace(
+            "</body>",
+            '  <script src="/static/model-downloads/app.js" defer></script>\n</body>',
+            1,
+        )
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     @application.get("/avatar", include_in_schema=False)
     def avatar_page() -> FileResponse:
@@ -1348,6 +1428,142 @@ def create_app(
             instance_id=payload.instance_id,
             details=dict(result),
         )
+
+    @application.get(
+        "/api/models/downloads",
+        response_model=ModelDownloadListResponse,
+        tags=["models"],
+    )
+    def list_model_downloads(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelDownloadListResponse:
+        settings = get_settings()
+        active_path = (
+            settings.llm.llama_cpp_model_path
+            if settings.llm.backend == "llama_cpp"
+            else None
+        )
+        return ModelDownloadListResponse(
+            **active_runtime.model_downloads.snapshot(active_path=active_path)
+        )
+
+    @application.post(
+        "/api/models/downloads",
+        response_model=ModelDownloadJobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["models"],
+    )
+    def start_model_download(
+        payload: ModelDownloadRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelDownloadJobResponse:
+        try:
+            job = active_runtime.model_downloads.start_download(
+                url=payload.url,
+                filename=payload.filename,
+                sha256=payload.sha256,
+            )
+        except ModelDownloadError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        active_runtime.events.publish(
+            "model.download.started",
+            {"job_id": job.id, "filename": job.filename, "url": job.url},
+        )
+        return ModelDownloadJobResponse(**job.to_dict())
+
+    @application.post(
+        "/api/models/downloads/{job_id}/cancel",
+        response_model=ModelDownloadJobResponse,
+        tags=["models"],
+    )
+    def cancel_model_download(
+        job_id: str,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> ModelDownloadJobResponse:
+        try:
+            job = active_runtime.model_downloads.cancel_download(job_id)
+        except ModelDownloadError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "model.download.cancelled",
+            {"job_id": job.id, "filename": job.filename},
+        )
+        return ModelDownloadJobResponse(**job.to_dict())
+
+    @application.post(
+        "/api/models/downloads/select",
+        response_model=LocalModelSelectionResponse,
+        tags=["models"],
+    )
+    def select_downloaded_model(
+        payload: LocalModelSelectionRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> LocalModelSelectionResponse:
+        try:
+            model_path = active_runtime.model_downloads.resolve_model(payload.filename)
+        except ModelDownloadError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        current = get_settings()
+        reasoning_mode = str(current.llm.reasoning_mode or "auto").casefold()
+        if reasoning_mode not in {"off", "on", "auto"}:
+            reasoning_mode = "auto"
+        updated = update_settings(
+            {
+                "llm": {
+                    "backend": "llama_cpp",
+                    "llama_cpp_model_path": str(model_path),
+                    "llama_cpp_model_alias": model_path.stem,
+                    "reasoning_mode": reasoning_mode,
+                }
+            }
+        )
+        from app.llm_runtime import retire_llm_runtime_contexts
+
+        cleanup = retire_llm_runtime_contexts()
+        active_runtime.events.publish(
+            "model.changed",
+            {
+                "backend": "llama_cpp",
+                "model": updated.llm.llama_cpp_model_alias,
+                "model_path": updated.llm.llama_cpp_model_path,
+                "context_reset": cleanup.context_reset,
+            },
+        )
+        return LocalModelSelectionResponse(
+            backend="llama_cpp",
+            model_path=updated.llm.llama_cpp_model_path,
+            model_alias=updated.llm.llama_cpp_model_alias,
+            context_reset=cleanup.context_reset,
+        )
+
+    @application.delete(
+        "/api/models/downloads/local/{filename}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["models"],
+    )
+    def delete_downloaded_model(
+        filename: str,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> Response:
+        settings = get_settings()
+        active_path = (
+            settings.llm.llama_cpp_model_path
+            if settings.llm.backend == "llama_cpp"
+            else None
+        )
+        try:
+            active_runtime.model_downloads.delete_model(
+                unquote(filename),
+                active_path=active_path,
+            )
+        except ModelDownloadError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "model.download.deleted",
+            {"filename": unquote(filename)},
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.get(
         "/api/personalities",

@@ -4,17 +4,14 @@
 and uses its OpenAI-compatible `/v1/chat/completions` endpoint through Project
 Akira's common `LLMBackend` interface.
 
-## Scope of issue #32
+## v0.5 rollout
 
-This first managed backend intentionally requires the user to provide:
+The managed backend requires a `llama-server` executable, or an installation
+available on `PATH`. Issue #33 adds the built-in GGUF download manager so a
+model no longer has to be placed and configured manually.
 
-- a `llama-server` executable, or an installation available on `PATH`
-- a local `.gguf` model file
-- manual context, GPU-layer, and thread settings
+The remaining v0.5 issues add:
 
-The following v0.5 issues add the user-facing layers around this backend:
-
-- #33 — model download manager
 - #34 — hardware presets
 - #35 — detailed backend health checks
 - #36 — richer lifecycle status, shutdown reporting, and recovery
@@ -30,7 +27,28 @@ When `llm.llama_cpp_executable` is empty, Project Akira checks:
 2. `llama.cpp/llama-server` in the packaged resource directory
 3. `llama-server.exe` or `llama-server` on `PATH`
 
-No llama.cpp binary is downloaded by this issue.
+The model manager downloads GGUF weights only. A llama.cpp executable is still
+provided separately or bundled by a release build.
+
+## Managed model downloads
+
+The Models page accepts a direct HTTP or HTTPS URL to a `.gguf` file. Downloads
+are stored under `Data/models/llama.cpp` in an installed build and
+`data/models/llama.cpp` in a source checkout.
+
+- Incomplete downloads use a `.gguf.part` file and send an HTTP `Range` request
+  when retried.
+- The completed file must begin with the GGUF magic header before it is renamed.
+- An optional SHA-256 value verifies the completed file before it is renamed.
+  Invalid content and checksum failures are removed instead of kept for resume.
+- Completed files are listed on the Models page and can be selected for the
+  managed llama.cpp backend or deleted when they are not active.
+- Closing Project Akira requests cancellation of active model downloads. The
+  partial file remains available for a later resume.
+
+Selecting a downloaded model updates `llm.backend`,
+`llm.llama_cpp_model_path`, and `llm.llama_cpp_model_alias`; the next message
+starts the managed server with that file.
 
 ## Local-only server
 
