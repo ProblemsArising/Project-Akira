@@ -453,21 +453,36 @@ def create_llm_backend(
     client: Any | None = None,
     native_client: Any | None = None,
 ) -> LLMBackend:
-    """Create the configured backend through the shared backend contract.
+    """Create the configured backend through the shared backend contract."""
 
-    The current factory retains Project Akira's existing LM Studio and
-    OpenAI-compatible implementation. Later v0.5 issues can select managed
-    backends here without changing conversation or Discord orchestration.
-    """
+    resolved = settings or get_settings()
+    backend_id = normalize_backend_id(resolved.llm.backend)
 
-    return LocalLLM(
-        settings,
-        client=client,
-        native_client=native_client,
+    if backend_id == "lm_studio":
+        # Import lazily so the explicit adapter can inherit the compatibility
+        # implementation without creating a module-import cycle.
+        from .lm_studio_backend import LMStudioBackend
+
+        return LMStudioBackend(
+            resolved,
+            client=client,
+            native_client=native_client,
+        )
+
+    if backend_id == "openai_compatible":
+        return LocalLLM(
+            resolved,
+            client=client,
+            native_client=native_client,
+        )
+
+    raise ValueError(
+        "Unsupported LLM backend "
+        f"{backend_id!r}. Choose 'lm_studio' or 'openai_compatible'."
     )
 
 
-_DEFAULT_LLM: LocalLLM | None = None
+_DEFAULT_LLM: LLMBackend | None = None
 _DEFAULT_FINGERPRINT: tuple[Any, ...] | None = None
 _DEFAULT_LOCK = threading.RLock()
 
@@ -481,7 +496,7 @@ def _settings_fingerprint(settings: AppSettings) -> tuple[Any, ...]:
     )
 
 
-def get_default_llm(*, reload: bool = False) -> LocalLLM:
+def get_default_llm(*, reload: bool = False) -> LLMBackend:
     """Return the configured process-wide LLM client.
 
     If a future WebUI saves different LLM or personality settings, the next call
@@ -495,8 +510,11 @@ def get_default_llm(*, reload: bool = False) -> LocalLLM:
     fingerprint = _settings_fingerprint(settings)
     with _DEFAULT_LOCK:
         if _DEFAULT_LLM is None or _DEFAULT_FINGERPRINT != fingerprint:
+            previous = _DEFAULT_LLM
             _DEFAULT_LLM = create_llm_backend(settings)
             _DEFAULT_FINGERPRINT = fingerprint
+            if previous is not None:
+                previous.close()
         return _DEFAULT_LLM
 
 
@@ -533,8 +551,9 @@ def refresh_personality_prompt(prompt: str | None = None) -> bool:
         if _DEFAULT_LLM is None:
             _DEFAULT_FINGERPRINT = None
             return False
-        _DEFAULT_LLM.settings = settings
-        _DEFAULT_LLM.llm_settings = settings.llm
+        # Personality refresh is part of the shared interface. Backend/model
+        # setting changes invalidate the cached backend through the settings
+        # fingerprint and are recreated on the next message.
         _DEFAULT_LLM.set_system_prompt(resolved)
         _DEFAULT_FINGERPRINT = _settings_fingerprint(settings)
         return True

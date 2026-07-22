@@ -1,15 +1,4 @@
 {
   "facts": [],
-  "turns": [
-    {
-      "time": "2026-07-22T00:44:40",
-      "user": "hey",
-      "assistant": "Hey there! What are we doing today? Are you finally going to tackle that project you were telling me about, or are we just chilling?"
-    },
-    {
-      "time": "2026-07-22T00:45:11",
-      "user": "sleepy",
-      "assistant": "Oh, okay, so we went from counting numbers straight to nap time. Are you actually ready to crash for the day, or are you just feeling a little drained from all that suspense? If you need to close your eyes for a bit, I can stay right here with you."
-    }
-  ]
+  "turns": []
 }
