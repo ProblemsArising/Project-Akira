@@ -1,4 +1,5 @@
 {
   "facts": [],
-  "turns": []
+  "turns": [],
+  "schema_version": 2
 }
