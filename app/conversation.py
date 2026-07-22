@@ -13,10 +13,14 @@ real application starts.
 
 from __future__ import annotations
 
+import importlib
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from ai.llm_backend import LLMBackend
 
 ConversationSource = Literal["voice", "text"]
 Recorder = Callable[[], str | None]
@@ -148,26 +152,36 @@ class ConversationService:
             kwargs["history_store"] = get_history_store()
 
     @classmethod
-    def from_default_components(cls, **kwargs: object) -> "ConversationService":
+    def from_default_components(
+        cls,
+        *,
+        llm_backend: "LLMBackend | None" = None,
+        **kwargs: object,
+    ) -> "ConversationService":
         """Create the service using the complete production voice pipeline.
 
         Imports are intentionally local. Merely importing this service should
         not initialize Faster-Whisper, CUDA, pyttsx3, or the VMC avatar.
         """
 
-        from ai import llm as llm_module
+        if llm_backend is None:
+            llm_module = importlib.import_module("ai.llm")
 
-        ask_ai = llm_module.ask_ai
-        load_short_term_context = getattr(
-            llm_module,
-            "load_short_term_context",
-            lambda turns: None,
-        )
-        reset_short_term_context = getattr(
-            llm_module,
-            "reset_short_term_context",
-            lambda: None,
-        )
+            responder = llm_module.ask_ai
+            load_short_term_context = getattr(
+                llm_module,
+                "load_short_term_context",
+                lambda turns: None,
+            )
+            reset_short_term_context = getattr(
+                llm_module,
+                "reset_short_term_context",
+                lambda: None,
+            )
+        else:
+            responder = llm_backend.ask
+            load_short_term_context = llm_backend.load_short_term_history
+            reset_short_term_context = llm_backend.reset_short_term_memory
         from audio.devices import resolve_audio_device
         from audio.microphone import MicrophoneRecorder
         from audio.tts import create_speaker
@@ -207,7 +221,7 @@ class ConversationService:
         return cls(
             recorder=microphone.record,
             transcriber=transcribe,
-            responder=ask_ai,
+            responder=responder,
             speaker=speaker,
             stop_recorder=microphone.request_stop,
             reset_recorder=microphone.reset,
@@ -221,6 +235,7 @@ class ConversationService:
         cls,
         *,
         enable_speech: bool = True,
+        llm_backend: "LLMBackend | None" = None,
         **kwargs: object,
     ) -> "ConversationService":
         """Create a text-only service without importing microphone or Whisper.
@@ -230,19 +245,24 @@ class ConversationService:
         chat path and lets text-only users run Akira without audio input setup.
         """
 
-        from ai import llm as llm_module
+        if llm_backend is None:
+            llm_module = importlib.import_module("ai.llm")
 
-        ask_ai = llm_module.ask_ai
-        load_short_term_context = getattr(
-            llm_module,
-            "load_short_term_context",
-            lambda turns: None,
-        )
-        reset_short_term_context = getattr(
-            llm_module,
-            "reset_short_term_context",
-            lambda: None,
-        )
+            responder = llm_module.ask_ai
+            load_short_term_context = getattr(
+                llm_module,
+                "load_short_term_context",
+                lambda turns: None,
+            )
+            reset_short_term_context = getattr(
+                llm_module,
+                "reset_short_term_context",
+                lambda: None,
+            )
+        else:
+            responder = llm_backend.ask
+            load_short_term_context = llm_backend.load_short_term_history
+            reset_short_term_context = llm_backend.reset_short_term_memory
 
         if enable_speech:
             from audio.devices import resolve_audio_device
@@ -266,7 +286,7 @@ class ConversationService:
         return cls(
             recorder=lambda: None,
             transcriber=lambda audio_file: "",
-            responder=ask_ai,
+            responder=responder,
             speaker=speaker,
             load_conversation_context=load_short_term_context,
             reset_conversation_context=reset_short_term_context,
