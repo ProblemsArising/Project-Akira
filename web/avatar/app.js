@@ -5,6 +5,10 @@ import { TextBodyPosePlayer } from "/static/avatar/poses.js";
 
 window.__akiraAvatarAppStarted = true;
 
+const transparentWindow = new URLSearchParams(window.location.search).get("transparent") === "1";
+document.documentElement.classList.toggle("transparent-avatar-window", transparentWindow);
+document.body.classList.toggle("transparent-avatar-window", transparentWindow);
+
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 
 const elements = {
