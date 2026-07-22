@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.backend_health import check_backend_health
 from app.avatar_models import (
     AvatarModelInfo,
     AvatarModelStore,
@@ -89,6 +90,7 @@ AUDIO_WEB_ROOT = resource_path("web", "audio")
 MODELS_WEB_ROOT = resource_path("web", "models")
 MODEL_DOWNLOADS_WEB_ROOT = resource_path("web", "model_downloads")
 HARDWARE_PRESETS_WEB_ROOT = resource_path("web", "hardware_presets")
+BACKEND_HEALTH_WEB_ROOT = resource_path("web", "backend_health")
 AVATAR_WEB_ROOT = resource_path("web", "avatar")
 CALIBRATION_SAMPLE_PATH = user_file_path("data/calibration_sample.wav")
 
@@ -412,6 +414,32 @@ class ModelConfigResponse(StrictModel):
     model: str
     reasoning_mode: str
     service_loaded: bool
+
+
+class BackendHealthRequest(StrictModel):
+    backend: str = Field(min_length=1, max_length=100)
+    base_url: str = Field(default="", max_length=2_000)
+    api_key: str = Field(default="", max_length=10_000)
+    model: str = Field(default="", max_length=2_000)
+
+
+class BackendHealthResponse(StrictModel):
+    backend: str
+    display_name: str
+    status: str
+    base_url: str
+    endpoint: str | None
+    message: str
+    checked_at: str
+    reachable: bool
+    latency_ms: float | None
+    model: str | None
+    model_available: bool | None
+    model_loaded: bool | None
+    managed: bool
+    process_running: bool | None
+    process_pid: int | None
+    details: dict[str, Any]
 
 
 class ModelConnectionRequest(StrictModel):
@@ -972,6 +1000,11 @@ def create_app(
         name="hardware-presets-static",
     )
     application.mount(
+        "/static/backend-health",
+        StaticFiles(directory=BACKEND_HEALTH_WEB_ROOT),
+        name="backend-health-static",
+    )
+    application.mount(
         "/static/avatar",
         StaticFiles(directory=AVATAR_WEB_ROOT),
         name="avatar-static",
@@ -1039,7 +1072,9 @@ def create_app(
                 '  <link rel="stylesheet" '
                 'href="/static/model-downloads/styles.css">\n'
                 '  <link rel="stylesheet" '
-                'href="/static/hardware-presets/styles.css">\n</head>'
+                'href="/static/hardware-presets/styles.css">\n'
+                '  <link rel="stylesheet" '
+                'href="/static/backend-health/styles.css">\n</head>'
             ),
             1,
         )
@@ -1048,6 +1083,7 @@ def create_app(
             (
                 '  <script src="/static/model-downloads/app.js" defer></script>\n'
                 '  <script src="/static/hardware-presets/app.js" defer></script>\n'
+                '  <script src="/static/backend-health/app.js" defer></script>\n'
                 "</body>"
             ),
             1,
@@ -1448,6 +1484,34 @@ def create_app(
             is_listening=service.is_listening,
             is_running=service.is_running,
         )
+
+    @application.get(
+        "/api/models/health",
+        response_model=BackendHealthResponse,
+        tags=["models"],
+    )
+    def configured_model_health() -> BackendHealthResponse:
+        """Check whether the saved backend is reachable and model-ready."""
+
+        result = check_backend_health(settings=get_settings())
+        return BackendHealthResponse(**result.to_dict())
+
+    @application.post(
+        "/api/models/health",
+        response_model=BackendHealthResponse,
+        tags=["models"],
+    )
+    def model_health(payload: BackendHealthRequest) -> BackendHealthResponse:
+        """Check the currently edited Models-page values without saving them."""
+
+        result = check_backend_health(
+            settings=get_settings(),
+            backend=payload.backend,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            model=payload.model,
+        )
+        return BackendHealthResponse(**result.to_dict())
 
     @application.get(
         "/api/models/config",
