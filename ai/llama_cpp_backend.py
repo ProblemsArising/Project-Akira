@@ -2,9 +2,9 @@
 
 This module owns a local ``llama-server`` process and exposes it through the
 same OpenAI-compatible conversation implementation used by other backends.
-Model downloading, hardware presets, and richer health reporting are
-intentionally handled by later v0.5 issues. Basic process cleanup is included
-here so managed servers never survive a normal Project Akira shutdown.
+Model downloading and hardware presets are handled by the Models-page tools.
+Richer health reporting is added by a later v0.5 issue. Basic process cleanup
+is included here so managed servers never survive a normal Project Akira shutdown.
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ class LlamaCppProcessConfig:
     context_size: int = 8192
     gpu_layers: str = "auto"
     threads: int = -1
+    parallel_slots: int = 1
     startup_timeout_seconds: float = 120.0
     reasoning_mode: str = "off"
     extra_args: tuple[str, ...] = ()
@@ -239,6 +240,8 @@ def llama_cpp_process_config(settings: AppSettings) -> LlamaCppProcessConfig:
         "--n-gpu-layers",
         "-t",
         "--threads",
+        "-np",
+        "--parallel",
         "-rea",
         "--reasoning",
         "--api-prefix",
@@ -314,6 +317,8 @@ class ManagedLlamaCppProcess:
             self.config.gpu_layers,
             "--threads",
             str(self.config.threads),
+            "--parallel",
+            str(self.config.parallel_slots),
             "--reasoning",
             self.config.reasoning_mode,
             "--no-webui",

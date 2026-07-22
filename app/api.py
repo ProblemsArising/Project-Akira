@@ -42,6 +42,18 @@ from app.avatar_models import (
 from app.conversation import ConversationResult, ConversationService
 from app.events import EventHub, EventStreamClosed, EventSubscription
 from app.history import ChatHistoryStore, get_history_store
+from app.hardware_presets import (
+    HardwarePreset,
+    HardwarePresetCatalog,
+    build_hardware_presets,
+    detect_hardware,
+    get_hardware_preset,
+    inspect_gguf_model,
+    load_hardware_preset_preferences,
+    reset_hardware_preset,
+    save_hardware_preset,
+    validate_preset_values,
+)
 from app.model_backends import (
     ModelBackendClient,
     ModelBackendError,
@@ -76,6 +88,7 @@ PERSONALITIES_WEB_ROOT = resource_path("web", "personalities")
 AUDIO_WEB_ROOT = resource_path("web", "audio")
 MODELS_WEB_ROOT = resource_path("web", "models")
 MODEL_DOWNLOADS_WEB_ROOT = resource_path("web", "model_downloads")
+HARDWARE_PRESETS_WEB_ROOT = resource_path("web", "hardware_presets")
 AVATAR_WEB_ROOT = resource_path("web", "avatar")
 CALIBRATION_SAMPLE_PATH = user_file_path("data/calibration_sample.wav")
 
@@ -394,6 +407,7 @@ class StartupStatusResponse(StrictModel):
 class ModelConfigResponse(StrictModel):
     backend: str
     base_url: str
+    backend_urls: dict[str, str]
     api_key: str
     model: str
     reasoning_mode: str
@@ -503,6 +517,78 @@ class LocalModelSelectionResponse(StrictModel):
     context_reset: bool
 
 
+class HardwareGpuResponse(StrictModel):
+    name: str
+    memory_bytes: int
+
+
+class HardwareProfileResponse(StrictModel):
+    logical_cpu_count: int
+    total_memory_bytes: int
+    total_vram_bytes: int
+    gpus: list[HardwareGpuResponse]
+    notes: list[str]
+
+
+class HardwarePresetResponse(StrictModel):
+    id: str
+    name: str
+    description: str
+    target_vram_bytes: int
+    context_size: int
+    gpu_layers: str
+    threads: int
+    estimated_vram_bytes: int | None
+    estimated_ram_bytes: int | None
+    recommended: bool
+    current: bool
+    default: bool
+    customized: bool
+    warnings: list[str]
+
+
+class HardwarePresetListResponse(StrictModel):
+    active_backend: str
+    profile: HardwareProfileResponse
+    model_path: str | None
+    model_size_bytes: int | None
+    model_layer_count: int | None
+    kv_bytes_per_token: int | None
+    recommended_id: str
+    default_id: str
+    current_id: str | None
+    presets: list[HardwarePresetResponse]
+
+
+class HardwarePresetApplyRequest(StrictModel):
+    preset_id: str = Field(min_length=1, max_length=50)
+    context_size: int = Field(ge=256, le=2_000_000)
+    gpu_layers: str = Field(min_length=1, max_length=20)
+    threads: int = Field(ge=-1, le=1024)
+    set_default: bool = False
+
+
+class HardwarePresetResetRequest(StrictModel):
+    preset_id: str = Field(min_length=1, max_length=50)
+
+
+class HardwarePresetApplyResponse(StrictModel):
+    preset: HardwarePresetResponse
+    active_backend: str
+    applied_to_active_backend: bool
+    context_reset: bool
+    saved_as_default: bool
+    runtime_state: str
+    runtime_pid: int | None
+    configured_context_size: int
+    configured_gpu_layers: str
+    configured_threads: int
+    active_context_size: int | None
+    active_gpu_layers: str | None
+    active_threads: int | None
+    restart_error: str | None
+
+
 class AudioDeviceResponse(StrictModel):
     index: int
     name: str
@@ -575,6 +661,103 @@ def _model_discovery_response(discovery: ModelDiscovery) -> ModelDiscoveryRespon
         api_url=discovery.api_url,
         models=[_model_info_response(model) for model in discovery.models],
     )
+
+
+def _model_backend_urls(llm: Any) -> dict[str, str]:
+    host = str(llm.llama_cpp_host or "127.0.0.1").strip()
+    return {
+        "lm_studio": str(
+            llm.lm_studio_base_url or "http://localhost:1234/v1"
+        ).strip(),
+        "openai_compatible": str(
+            llm.openai_compatible_base_url or "http://localhost:11434/v1"
+        ).strip(),
+        "llama_cpp": f"http://{host}:{int(llm.llama_cpp_port)}/v1",
+    }
+
+
+def _remember_model_backend_url(backend: str, base_url: str) -> None:
+    field_name = {
+        "lm_studio": "lm_studio_base_url",
+        "openai_compatible": "openai_compatible_base_url",
+    }.get(backend)
+    if field_name:
+        update_settings({"llm": {field_name: base_url}})
+
+
+def _hardware_preset_response(
+    preset: HardwarePreset,
+) -> HardwarePresetResponse:
+    return HardwarePresetResponse(
+        id=preset.id,
+        name=preset.name,
+        description=preset.description,
+        target_vram_bytes=preset.target_vram_bytes,
+        context_size=preset.context_size,
+        gpu_layers=preset.gpu_layers,
+        threads=preset.threads,
+        estimated_vram_bytes=preset.estimated_vram_bytes,
+        estimated_ram_bytes=preset.estimated_ram_bytes,
+        recommended=preset.recommended,
+        current=preset.current,
+        default=preset.default,
+        customized=preset.customized,
+        warnings=list(preset.warnings),
+    )
+
+
+def _hardware_preset_list_response(
+    catalog: HardwarePresetCatalog,
+    *,
+    active_backend: str,
+    model_path: str | None,
+) -> HardwarePresetListResponse:
+    return HardwarePresetListResponse(
+        active_backend=active_backend,
+        profile=HardwareProfileResponse(
+            logical_cpu_count=catalog.profile.logical_cpu_count,
+            total_memory_bytes=catalog.profile.total_memory_bytes,
+            total_vram_bytes=catalog.profile.total_gpu_memory_bytes,
+            gpus=[
+                HardwareGpuResponse(
+                    name=gpu.name,
+                    memory_bytes=gpu.memory_bytes,
+                )
+                for gpu in catalog.profile.gpus
+            ],
+            notes=list(catalog.profile.notes),
+        ),
+        model_path=model_path,
+        model_size_bytes=catalog.model_size_bytes,
+        model_layer_count=(
+            None if catalog.model_profile is None else catalog.model_profile.layer_count
+        ),
+        kv_bytes_per_token=(
+            None
+            if catalog.model_profile is None
+            else catalog.model_profile.kv_bytes_per_token
+        ),
+        recommended_id=catalog.recommended_id,
+        default_id=catalog.default_id,
+        current_id=catalog.current_id,
+        presets=[
+            _hardware_preset_response(preset) for preset in catalog.presets
+        ],
+    )
+
+
+def _build_hardware_preset_catalog() -> tuple[Any, HardwarePresetCatalog]:
+    settings = get_settings()
+    model_path = str(settings.llm.llama_cpp_model_path or "").strip()
+    catalog = build_hardware_presets(
+        detect_hardware(),
+        model_profile=inspect_gguf_model(model_path),
+        preferences=load_hardware_preset_preferences(),
+        current_context_size=settings.llm.llama_cpp_context_size,
+        current_gpu_layers=settings.llm.llama_cpp_gpu_layers,
+        current_threads=settings.llm.llama_cpp_threads,
+    )
+    return settings, catalog
 
 
 def _close_model_client(client: ModelBackendClient) -> None:
@@ -784,6 +967,11 @@ def create_app(
         name="model-downloads-static",
     )
     application.mount(
+        "/static/hardware-presets",
+        StaticFiles(directory=HARDWARE_PRESETS_WEB_ROOT),
+        name="hardware-presets-static",
+    )
+    application.mount(
         "/static/avatar",
         StaticFiles(directory=AVATAR_WEB_ROOT),
         name="avatar-static",
@@ -842,17 +1030,26 @@ def create_app(
 
     @application.get("/models", include_in_schema=False)
     def models_page() -> HTMLResponse:
-        """Serve the model selector with the managed-download panel injected."""
+        """Serve the model selector with managed llama.cpp tools injected."""
 
         page = (MODELS_WEB_ROOT / "index.html").read_text(encoding="utf-8")
         page = page.replace(
             "</head>",
-            '  <link rel="stylesheet" href="/static/model-downloads/styles.css">\n</head>',
+            (
+                '  <link rel="stylesheet" '
+                'href="/static/model-downloads/styles.css">\n'
+                '  <link rel="stylesheet" '
+                'href="/static/hardware-presets/styles.css">\n</head>'
+            ),
             1,
         )
         page = page.replace(
             "</body>",
-            '  <script src="/static/model-downloads/app.js" defer></script>\n</body>',
+            (
+                '  <script src="/static/model-downloads/app.js" defer></script>\n'
+                '  <script src="/static/hardware-presets/app.js" defer></script>\n'
+                "</body>"
+            ),
             1,
         )
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
@@ -1261,11 +1458,28 @@ def create_app(
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> ModelConfigResponse:
         llm = get_settings().llm
+        backend_id = str(llm.backend or "").strip().casefold().replace("-", "_")
+        if backend_id == "llama_cpp":
+            model_path_text = str(llm.llama_cpp_model_path or "").strip()
+            model_path = Path(model_path_text) if model_path_text else None
+            model_name = str(llm.llama_cpp_model_alias or "").strip()
+            if not model_name and model_path is not None:
+                model_name = model_path.stem
+            host = str(llm.llama_cpp_host or "127.0.0.1").strip()
+            base_url = f"http://{host}:{int(llm.llama_cpp_port)}/v1"
+            api_key = ""
+        else:
+            model_name = llm.model
+            base_url = llm.base_url
+            api_key = (
+                "" if str(llm.api_key or "").casefold() == "none" else llm.api_key
+            )
         return ModelConfigResponse(
-            backend=llm.backend,
-            base_url=llm.base_url,
-            api_key="" if str(llm.api_key or "").casefold() == "none" else llm.api_key,
-            model=llm.model,
+            backend=backend_id,
+            base_url=base_url,
+            backend_urls=_model_backend_urls(llm),
+            api_key=api_key,
+            model=model_name,
             reasoning_mode=llm.reasoning_mode,
             service_loaded=active_runtime.service_loaded,
         )
@@ -1279,6 +1493,59 @@ def create_app(
         payload: ModelConnectionRequest,
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> ModelDiscoveryResponse:
+        backend_id = str(payload.backend or "").strip().casefold().replace("-", "_")
+        if backend_id == "llama_cpp":
+            llm = get_settings().llm
+            model_path_text = str(llm.llama_cpp_model_path or "").strip()
+            model_path = Path(model_path_text) if model_path_text else None
+            model_name = str(llm.llama_cpp_model_alias or "").strip()
+            if not model_name and model_path is not None:
+                model_name = model_path.stem
+            host = str(llm.llama_cpp_host or "127.0.0.1").strip()
+            base_url = f"http://{host}:{int(llm.llama_cpp_port)}/v1"
+            models: list[ModelInfoResponse] = []
+            if model_name:
+                size_bytes = None
+                if model_path is not None:
+                    try:
+                        size_bytes = model_path.stat().st_size
+                    except OSError:
+                        size_bytes = None
+                models.append(
+                    ModelInfoResponse(
+                        id=model_name,
+                        display_name=model_name,
+                        model_type="llm",
+                        publisher="Project Akira",
+                        architecture="GGUF",
+                        quantization=None,
+                        params=None,
+                        size_bytes=size_bytes,
+                        max_context_length=int(llm.llama_cpp_context_size),
+                        loaded=False,
+                        instance_ids=[],
+                        reasoning_options=["off", "on"],
+                        default_reasoning=(
+                            str(llm.reasoning_mode or "off")
+                            if str(llm.reasoning_mode or "off") in {"off", "on"}
+                            else "off"
+                        ),
+                        vision=False,
+                        tool_use=False,
+                        description=(
+                            f"Managed llama.cpp model at {model_path_text}"
+                            if model_path_text
+                            else "Managed llama.cpp model"
+                        ),
+                    )
+                )
+            return ModelDiscoveryResponse(
+                backend="llama_cpp",
+                base_url=base_url,
+                api_url=f"{base_url}/models",
+                models=models,
+            )
+
         client = active_runtime.create_model_backend_client()
         try:
             discovery = client.discover(
@@ -1290,6 +1557,7 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(error)) from error
         finally:
             _close_model_client(client)
+        _remember_model_backend_url(discovery.backend, discovery.base_url)
         return _model_discovery_response(discovery)
 
     @application.post(
@@ -1301,6 +1569,59 @@ def create_app(
         payload: ModelSelectionRequest,
         active_runtime: BackendRuntime = Depends(_get_runtime),
     ) -> ModelSelectionResponse:
+        requested_backend = (
+            str(payload.backend or "").strip().casefold().replace("-", "_")
+        )
+        if requested_backend == "llama_cpp":
+            current = get_settings()
+            model_path_text = str(current.llm.llama_cpp_model_path or "").strip()
+            model_path = Path(model_path_text) if model_path_text else None
+            if model_path is None or not model_path.is_file():
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Choose or download a valid GGUF model before activating "
+                        "managed llama.cpp."
+                    ),
+                )
+            model_id = str(current.llm.llama_cpp_model_alias or "").strip()
+            if not model_id:
+                model_id = model_path.stem
+            reasoning_mode = str(payload.reasoning_mode or "off").strip().casefold()
+            if reasoning_mode not in {"off", "on"}:
+                reasoning_mode = "off"
+            updated = update_settings(
+                {
+                    "llm": {
+                        "backend": "llama_cpp",
+                        "llama_cpp_model_alias": model_id,
+                        "reasoning_mode": reasoning_mode,
+                    }
+                }
+            )
+            from app.llm_runtime import retire_llm_runtime_contexts
+
+            cleanup = retire_llm_runtime_contexts()
+            host = str(updated.llm.llama_cpp_host or "127.0.0.1").strip()
+            base_url = f"http://{host}:{int(updated.llm.llama_cpp_port)}/v1"
+            active_runtime.events.publish(
+                "model.changed",
+                {
+                    "backend": "llama_cpp",
+                    "base_url": base_url,
+                    "model": model_id,
+                    "reasoning_mode": updated.llm.reasoning_mode,
+                    "context_reset": cleanup.context_reset,
+                },
+            )
+            return ModelSelectionResponse(
+                backend="llama_cpp",
+                base_url=base_url,
+                model=model_id,
+                reasoning_mode=updated.llm.reasoning_mode,
+                context_reset=cleanup.context_reset,
+            )
+
         try:
             backend = normalize_backend(payload.backend)
             base_url = normalize_base_url(payload.base_url)
@@ -1315,15 +1636,20 @@ def create_app(
         if backend == "openai_compatible":
             reasoning_mode = "auto"
 
-        changes = {
-            "llm": {
-                "backend": backend,
-                "base_url": base_url,
-                "api_key": payload.api_key.strip() or "None",
-                "model": model_id,
-                "reasoning_mode": reasoning_mode,
-            }
+        llm_changes: dict[str, Any] = {
+            "backend": backend,
+            "base_url": base_url,
+            "api_key": payload.api_key.strip() or "None",
+            "model": model_id,
+            "reasoning_mode": reasoning_mode,
         }
+        remembered_url_field = {
+            "lm_studio": "lm_studio_base_url",
+            "openai_compatible": "openai_compatible_base_url",
+        }.get(backend)
+        if remembered_url_field:
+            llm_changes[remembered_url_field] = base_url
+        changes = {"llm": llm_changes}
         current = get_settings().to_dict()
         try:
             normalized = validate_settings_changes(changes, current)
@@ -1427,6 +1753,187 @@ def create_app(
             status="unloaded",
             instance_id=payload.instance_id,
             details=dict(result),
+        )
+
+    @application.get(
+        "/api/models/hardware-presets",
+        response_model=HardwarePresetListResponse,
+        tags=["models"],
+    )
+    def list_hardware_presets() -> HardwarePresetListResponse:
+        settings, catalog = _build_hardware_preset_catalog()
+        model_path = str(settings.llm.llama_cpp_model_path or "").strip() or None
+        return _hardware_preset_list_response(
+            catalog,
+            active_backend=settings.llm.backend,
+            model_path=model_path,
+        )
+
+    @application.post(
+        "/api/models/hardware-presets/apply",
+        response_model=HardwarePresetApplyResponse,
+        tags=["models"],
+    )
+    def apply_hardware_preset(
+        payload: HardwarePresetApplyRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> HardwarePresetApplyResponse:
+        current, catalog = _build_hardware_preset_catalog()
+        try:
+            get_hardware_preset(catalog, payload.preset_id)
+            values = validate_preset_values(
+                context_size=payload.context_size,
+                gpu_layers=payload.gpu_layers,
+                threads=payload.threads,
+            )
+            save_hardware_preset(
+                payload.preset_id,
+                values,
+                set_default=payload.set_default,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown hardware preset: {payload.preset_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        changed = (
+            current.llm.llama_cpp_context_size != values.context_size
+            or str(current.llm.llama_cpp_gpu_layers).casefold()
+            != values.gpu_layers.casefold()
+            or current.llm.llama_cpp_threads != values.threads
+        )
+        if changed:
+            update_settings(
+                {
+                    "llm": {
+                        "llama_cpp_context_size": values.context_size,
+                        "llama_cpp_gpu_layers": values.gpu_layers,
+                        "llama_cpp_threads": values.threads,
+                    }
+                }
+            )
+
+        # Read the values back from disk/cache instead of trusting the request.
+        # These are the exact values the next managed llama-server launch uses.
+        configured = get_settings(reload=True)
+        configured_context_size = int(configured.llm.llama_cpp_context_size)
+        configured_gpu_layers = str(configured.llm.llama_cpp_gpu_layers)
+        configured_threads = int(configured.llm.llama_cpp_threads)
+
+        context_reset = False
+        backend_id = (
+            str(configured.llm.backend or "")
+            .strip()
+            .casefold()
+            .replace("-", "_")
+        )
+        if not changed:
+            runtime_state = "unchanged"
+        elif backend_id == "llama_cpp":
+            runtime_state = "pending"
+        else:
+            runtime_state = "inactive_backend"
+        runtime_pid: int | None = None
+        active_context_size: int | None = None
+        active_gpu_layers: str | None = None
+        active_threads: int | None = None
+        restart_error: str | None = None
+        if changed and backend_id == "llama_cpp":
+            from app.llm_runtime import retire_llm_runtime_contexts
+
+            cleanup = retire_llm_runtime_contexts()
+            context_reset = bool(cleanup.context_reset)
+            had_running_runtime = context_reset or bool(
+                getattr(cleanup, "managed_processes_stopped", 0)
+            )
+            if had_running_runtime:
+                try:
+                    from ai.llm import get_default_llm
+
+                    backend = get_default_llm(reload=True)
+                    process = getattr(backend, "process", None)
+                    process_config = getattr(process, "config", None)
+                    if process is None or process_config is None:
+                        raise RuntimeError(
+                            "The configured backend did not expose a managed "
+                            "llama.cpp process."
+                        )
+                    runtime_pid = getattr(process, "pid", None)
+                    active_context_size = int(process_config.context_size)
+                    active_gpu_layers = str(process_config.gpu_layers)
+                    active_threads = int(process_config.threads)
+                    runtime_state = (
+                        "restarted" if bool(getattr(process, "running", False))
+                        else "restart_failed"
+                    )
+                    if runtime_state == "restart_failed":
+                        restart_error = "llama-server was created but is not running."
+                except Exception as error:  # Settings remain saved for the next launch.
+                    runtime_state = "restart_failed"
+                    restart_error = str(error).strip() or error.__class__.__name__
+
+        _, refreshed = _build_hardware_preset_catalog()
+        applied = get_hardware_preset(refreshed, payload.preset_id)
+        active_runtime.events.publish(
+            "model.hardware_preset.applied",
+            {
+                "preset_id": applied.id,
+                "active_backend": backend_id,
+                "applied_to_active_backend": backend_id == "llama_cpp",
+                "context_size": configured_context_size,
+                "gpu_layers": configured_gpu_layers,
+                "threads": configured_threads,
+                "set_default": payload.set_default,
+                "context_reset": context_reset,
+                "runtime_state": runtime_state,
+                "runtime_pid": runtime_pid,
+                "active_context_size": active_context_size,
+                "active_gpu_layers": active_gpu_layers,
+                "active_threads": active_threads,
+                "restart_error": restart_error,
+            },
+        )
+        return HardwarePresetApplyResponse(
+            preset=_hardware_preset_response(applied),
+            active_backend=backend_id,
+            applied_to_active_backend=backend_id == "llama_cpp",
+            context_reset=context_reset,
+            saved_as_default=payload.set_default,
+            runtime_state=runtime_state,
+            runtime_pid=runtime_pid,
+            configured_context_size=configured_context_size,
+            configured_gpu_layers=configured_gpu_layers,
+            configured_threads=configured_threads,
+            active_context_size=active_context_size,
+            active_gpu_layers=active_gpu_layers,
+            active_threads=active_threads,
+            restart_error=restart_error,
+        )
+
+    @application.post(
+        "/api/models/hardware-presets/reset",
+        response_model=HardwarePresetListResponse,
+        tags=["models"],
+    )
+    def reset_hardware_preset_values(
+        payload: HardwarePresetResetRequest,
+    ) -> HardwarePresetListResponse:
+        try:
+            reset_hardware_preset(payload.preset_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown hardware preset: {payload.preset_id}",
+            ) from error
+        settings, catalog = _build_hardware_preset_catalog()
+        model_path = str(settings.llm.llama_cpp_model_path or "").strip() or None
+        return _hardware_preset_list_response(
+            catalog,
+            active_backend=settings.llm.backend,
+            model_path=model_path,
         )
 
     @application.get(

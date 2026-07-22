@@ -20,7 +20,7 @@ from app.paths import PROJECT_ROOT, USER_DATA_ROOT
 
 DEFAULT_SETTINGS_FILE = USER_DATA_ROOT / "settings.json"
 SETTINGS_ENV_VAR = "AKIRA_SETTINGS_FILE"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 @dataclass
@@ -52,6 +52,10 @@ class GeneralSettings:
 class LLMSettings:
     backend: str = "lm_studio"
     base_url: str = "http://localhost:1234/v1"
+    # Remember the most recently used endpoint for each external backend so
+    # switching backend cards on the Models page restores the right URL.
+    lm_studio_base_url: str = "http://localhost:1234/v1"
+    openai_compatible_base_url: str = "http://localhost:11434/v1"
     api_key: str = "None"
     model: str = "gemma4-12b-qat-uncensored-hauhaucs-balanced"
     temperature: float = 0.75
@@ -76,9 +80,9 @@ class LLMSettings:
     # native /api/v1/chat endpoint so the preference is actually enforced.
     reasoning_mode: str = "off"
 
-    # Managed llama.cpp settings. Model downloads and automatic hardware
-    # presets are introduced by later v0.5 issues; these paths are manual for
-    # the initial backend implementation.
+    # Managed llama.cpp settings. The Models page can populate the model path
+    # through its download manager and tune context/offload/thread values with
+    # hardware presets; every field remains manually editable in Settings.
     llama_cpp_executable: str = ""
     llama_cpp_model_path: str = ""
     llama_cpp_model_alias: str = "akira-local"
@@ -287,6 +291,18 @@ def _migrate_settings_data(data: Mapping[str, Any]) -> dict[str, Any]:
             avatar["backend"] = "embedded"
 
         migrated["avatar"] = avatar
+
+    if version < 5:
+        llm = dict(migrated.get("llm") or {})
+        active_backend = str(llm.get("backend") or "lm_studio").strip().casefold()
+        active_url = str(llm.get("base_url") or "").strip()
+        if active_backend == "lm_studio" and active_url:
+            llm.setdefault("lm_studio_base_url", active_url)
+        elif active_backend in {"openai_compatible", "openai-compatible"} and active_url:
+            llm.setdefault("openai_compatible_base_url", active_url)
+        llm.setdefault("lm_studio_base_url", "http://localhost:1234/v1")
+        llm.setdefault("openai_compatible_base_url", "http://localhost:11434/v1")
+        migrated["llm"] = llm
 
     migrated["schema_version"] = CURRENT_SCHEMA_VERSION
     return migrated

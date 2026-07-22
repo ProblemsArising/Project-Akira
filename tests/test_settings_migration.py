@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config.settings import AppSettings, load_settings
+from config.settings import CURRENT_SCHEMA_VERSION, AppSettings, load_settings
 
 
 class SettingsMigrationTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class SettingsMigrationTests(unittest.TestCase):
         defaults = AppSettings()
         self.assertEqual(defaults.llm.max_tokens, 1024)
         self.assertEqual(defaults.llm.reasoning_mode, "off")
-        self.assertEqual(defaults.schema_version, 4)
+        self.assertEqual(defaults.schema_version, CURRENT_SCHEMA_VERSION)
 
     def test_old_generated_defaults_are_upgraded(self) -> None:
         self.settings_file.write_text(
@@ -48,12 +48,12 @@ class SettingsMigrationTests(unittest.TestCase):
 
         self.assertEqual(settings.llm.max_tokens, 1024)
         self.assertEqual(settings.llm.reasoning_mode, "off")
-        self.assertEqual(settings.schema_version, 4)
+        self.assertEqual(settings.schema_version, CURRENT_SCHEMA_VERSION)
 
         saved = json.loads(self.settings_file.read_text(encoding="utf-8"))
         self.assertEqual(saved["llm"]["max_tokens"], 1024)
         self.assertEqual(saved["llm"]["reasoning_mode"], "off")
-        self.assertEqual(saved["schema_version"], 4)
+        self.assertEqual(saved["schema_version"], CURRENT_SCHEMA_VERSION)
 
     def test_custom_token_limit_is_preserved(self) -> None:
         self.settings_file.write_text(
@@ -73,7 +73,7 @@ class SettingsMigrationTests(unittest.TestCase):
 
         self.assertEqual(settings.llm.max_tokens, 768)
         self.assertEqual(settings.llm.reasoning_mode, "low")
-        self.assertEqual(settings.schema_version, 4)
+        self.assertEqual(settings.schema_version, CURRENT_SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,405 @@
+html[data-model-backend="llama_cpp"] #lmStudioActions,
+html[data-model-backend="openai_compatible"] #lmStudioActions {
+  display: none !important;
+}
+
+.backend-options.has-managed-llama {
+  grid-template-columns: 1fr;
+}
+
+.backend-options.has-managed-llama .backend-option > span:last-child {
+  min-width: 0;
+}
+
+.backend-icon.managed {
+  color: #b8f3ff;
+  background: rgba(95, 211, 238, .12);
+  border-color: rgba(95, 211, 238, .25);
+}
+
+.hardware-presets-card {
+  margin-top: 20px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.hardware-presets-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.hardware-presets-heading h3,
+.hardware-presets-heading p {
+  margin: 0;
+}
+
+.hardware-presets-heading h3 {
+  font-size: 18px;
+}
+
+.hardware-presets-copy {
+  max-width: 780px;
+  margin-top: 6px !important;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.hardware-status {
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, .025);
+  font-size: 11px;
+}
+
+.hardware-status[hidden] {
+  display: none;
+}
+
+.hardware-status.error {
+  color: #ffc1ca;
+  border-color: rgba(255, 130, 149, .28);
+  background: rgba(255, 130, 149, .08);
+}
+
+.hardware-status.success {
+  color: var(--success);
+  border-color: rgba(103, 223, 162, .24);
+  background: rgba(103, 223, 162, .07);
+}
+
+.hardware-summary {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: rgba(8, 6, 14, .3);
+}
+
+.hardware-summary[hidden],
+.hardware-preset-grid[hidden] {
+  display: none;
+}
+
+.hardware-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hardware-fact {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.hardware-fact span,
+.hardware-fact strong {
+  display: block;
+}
+
+.hardware-fact span,
+.hardware-memory-estimates span,
+.hardware-preset-field span {
+  color: var(--subtle);
+  font-size: 9px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.hardware-fact strong {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hardware-gpu-list {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hardware-gpu-list > div {
+  min-width: 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .02);
+  font-size: 10px;
+}
+
+.hardware-gpu-list span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hardware-gpu-list strong {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+
+.hardware-notes,
+.hardware-warnings {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.hardware-notes li,
+.hardware-warnings li {
+  overflow-wrap: anywhere;
+}
+
+.hardware-preset-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hardware-preset {
+  min-width: 0;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.hardware-preset.recommended {
+  border-color: var(--border-strong);
+  background: rgba(209, 138, 255, .065);
+}
+
+.hardware-preset.current {
+  box-shadow: inset 0 0 0 1px rgba(103, 223, 162, .18);
+}
+
+.hardware-preset.default {
+  outline: 1px solid rgba(117, 190, 255, .18);
+  outline-offset: -3px;
+}
+
+.hardware-preset.invalid {
+  border-color: rgba(255, 130, 149, .35);
+}
+
+.hardware-preset-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hardware-preset-title h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.hardware-badges {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.hardware-badge {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.hardware-badge.recommended {
+  color: var(--accent);
+  background: rgba(209, 138, 255, .11);
+}
+
+.hardware-badge.current {
+  color: var(--success);
+  background: rgba(103, 223, 162, .1);
+}
+
+.hardware-badge.default {
+  color: #9fd2ff;
+  background: rgba(117, 190, 255, .1);
+}
+
+.hardware-badge.customized {
+  color: var(--warning);
+  background: rgba(255, 199, 107, .1);
+}
+
+.hardware-preset-description {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.hardware-preset-target {
+  margin: 8px 0 0;
+  color: var(--subtle);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.hardware-preset-fields {
+  margin: 12px 0 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hardware-preset-field {
+  min-width: 0;
+  padding: 7px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(8, 6, 14, .28);
+}
+
+.hardware-preset-field input {
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: rgba(255, 255, 255, .035);
+  font: inherit;
+  font-size: 10px;
+  box-sizing: border-box;
+}
+
+.hardware-preset-field input:focus {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.hardware-memory-estimates {
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hardware-memory-estimates > div {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(8, 6, 14, .22);
+}
+
+.hardware-memory-estimates span,
+.hardware-memory-estimates strong {
+  display: block;
+}
+
+.hardware-memory-estimates strong {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.hardware-warnings {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: var(--warning);
+}
+
+.hardware-preset-actions {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hardware-preset-actions .button {
+  width: 100%;
+}
+
+.hardware-reset-button {
+  grid-column: 1 / -1;
+  padding: 6px;
+  border: 0;
+  color: var(--subtle);
+  background: transparent;
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.hardware-reset-button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.hardware-reset-button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+@media (max-width: 1000px) {
+  .hardware-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hardware-preset-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .hardware-presets-card {
+    padding: 17px;
+  }
+
+  .hardware-presets-heading {
+    flex-direction: column;
+  }
+
+  .hardware-refresh {
+    width: 100%;
+  }
+
+  .hardware-facts,
+  .hardware-gpu-list,
+  .hardware-preset-fields,
+  .hardware-memory-estimates,
+  .hardware-preset-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hardware-reset-button {
+    grid-column: auto;
+  }
+}
