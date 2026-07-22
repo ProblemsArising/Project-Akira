@@ -370,3 +370,48 @@ body.model-loaded[data-state="speaking"] .renderer-host {
     display: none;
   }
 }
+
+/* Optional transparent avatar client area */
+html.transparent-avatar-window,
+body.transparent-avatar-window {
+  background: transparent !important;
+}
+
+body.transparent-avatar-window .stage,
+body.transparent-avatar-window .avatar-space {
+  background: transparent;
+}
+
+body.transparent-avatar-window .ambient,
+body.transparent-avatar-window .pulse-ring {
+  opacity: 0;
+}
+
+body.transparent-avatar-window .renderer-host,
+body.transparent-avatar-window .renderer-host canvas {
+  background: transparent !important;
+}
+
+body.transparent-avatar-window .stage {
+  pointer-events: none;
+}
+
+body.transparent-avatar-window .renderer-host {
+  pointer-events: none;
+}
+
+body.transparent-avatar-window .stage-header,
+body.transparent-avatar-window .stage-footer,
+body.transparent-avatar-window .state-copy,
+body.transparent-avatar-window .model-notice {
+  /* Preserve the normal stage geometry so the WebGL canvas keeps the same
+     dimensions and camera framing as opaque mode. These elements remain in
+     layout but are invisible in the display-only Windows overlay. */
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.transparent-avatar-window.model-loaded .avatar-core {
+  display: none;
+}

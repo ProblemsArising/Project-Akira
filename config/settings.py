@@ -30,6 +30,7 @@ class GeneralSettings:
     close_to_tray: bool = True
     open_avatar_window: bool = True
     avatar_always_on_top: bool = False
+    avatar_transparent_window: bool = False
     remember_window_positions: bool = True
 
     # Native desktop-window bounds in logical pixels. ``None`` lets pywebview

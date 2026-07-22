@@ -16,6 +16,7 @@
     "general.launch_on_startup": { label: "Launch on startup", description: "Start Project Akira when Windows starts." },
     "general.open_avatar_window": { label: "Open avatar window", description: "Open the avatar automatically with the desktop app." },
     "general.avatar_always_on_top": { label: "Avatar always on top" },
+    "general.avatar_transparent_window": { label: "Transparent avatar window", description: "Make the avatar a display-only overlay. On Windows, the transparent client area passes mouse input through to the desktop and uses a fixed size; move it with the title bar. Choose or remove the VRM in opaque mode, then restart Project Akira." },
     "general.remember_window_positions": { label: "Remember window positions" },
 
     "llm.backend": { label: "Backend", description: "Use the Models page for discovery and selection.", options: ["lm_studio", "openai_compatible"], advanced: true },

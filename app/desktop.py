@@ -21,6 +21,10 @@ from urllib.request import urlopen
 
 from app.startup import StartupRegistrationError, get_startup_manager
 from app.tray import TrayController, TrayLaunchError
+from app.window_transparency import (
+    WINDOWS_TRANSPARENCY_KEY,
+    apply_windows_avatar_transparency,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HOST = "127.0.0.1"
@@ -211,6 +215,7 @@ class DesktopApplication:
         webview_module: Any | None = None,
         open_avatar_window: bool | None = None,
         avatar_always_on_top: bool | None = None,
+        avatar_transparent_window: bool | None = None,
         avatar_width: int | None = None,
         avatar_height: int | None = None,
         avatar_x: int | None = None,
@@ -233,6 +238,7 @@ class DesktopApplication:
         self.storage_path = storage_path or default_webview_storage_path()
         self.open_avatar_window = open_avatar_window
         self.avatar_always_on_top = avatar_always_on_top
+        self.avatar_transparent_window = avatar_transparent_window
         self.avatar_width = (
             None
             if avatar_width is None
@@ -271,7 +277,7 @@ class DesktopApplication:
             settings = get_settings()
         return settings.general
 
-    def _avatar_window_preferences(self) -> tuple[bool, bool]:
+    def _avatar_window_preferences(self) -> tuple[bool, bool, bool]:
         """Resolve CLI overrides against the persisted desktop settings."""
 
         general = self._general_settings()
@@ -285,7 +291,31 @@ class DesktopApplication:
             if self.avatar_always_on_top is not None
             else bool(getattr(general, "avatar_always_on_top", False))
         )
-        return enabled, on_top
+        transparent = (
+            bool(self.avatar_transparent_window)
+            if self.avatar_transparent_window is not None
+            else bool(getattr(general, "avatar_transparent_window", False))
+        )
+        return enabled, on_top, transparent
+
+    @staticmethod
+    def _attach_windows_transparency_before_show(window: Any) -> None:
+        """Configure the native WinForms surface before it becomes visible.
+
+        ``window.native`` is not guaranteed to exist until pywebview fires
+        ``before_show``. Calling ``window.show()`` from ``loaded`` can deadlock
+        the WinForms UI thread, so transparency is configured synchronously
+        before the initial show instead.
+        """
+
+        events = getattr(window, "events", None)
+        if events is None:
+            return
+
+        def before_show(*_args: Any) -> None:
+            apply_windows_avatar_transparency(window)
+
+        events.before_show += before_show
 
     def _tray_preferences(self) -> tuple[bool, bool]:
         """Resolve command-line tray overrides against persisted settings."""
@@ -654,25 +684,57 @@ class DesktopApplication:
             if self._close_to_tray_active:
                 self._attach_close_to_tray(main_window, name="main")
 
-            avatar_enabled, avatar_on_top = self._avatar_window_preferences()
+            (
+                avatar_enabled,
+                avatar_on_top,
+                avatar_transparent,
+            ) = self._avatar_window_preferences()
             if avatar_enabled:
                 avatar_geometry = self._resolved_geometry("avatar")
+                avatar_url = (
+                    f"{url}/avatar?transparent=1"
+                    if avatar_transparent
+                    else f"{url}/avatar"
+                )
+                native_windows_transparency = bool(
+                    avatar_transparent and os.name == "nt"
+                )
                 avatar_window = webview.create_window(
                     DEFAULT_AVATAR_TITLE,
-                    f"{url}/avatar",
+                    avatar_url,
                     width=avatar_geometry.width,
                     height=avatar_geometry.height,
                     x=avatar_geometry.x,
                     y=avatar_geometry.y,
                     min_size=DEFAULT_AVATAR_MIN_SIZE,
-                    resizable=True,
-                    maximized=avatar_geometry.maximized,
+                    # WinForms TransparencyKey makes the transparent client
+                    # area display-only and WebView2 resizing is unreliable.
+                    # Keep the Windows overlay movable through its title bar,
+                    # closable, and fixed-size until a dedicated native overlay
+                    # backend replaces this compatibility path.
+                    resizable=not native_windows_transparency,
+                    maximized=(
+                        False
+                        if native_windows_transparency
+                        else avatar_geometry.maximized
+                    ),
                     on_top=avatar_on_top,
-                    background_color="#0d0b16",
+                    hidden=False,
+                    # Let Edge/Chromium expose a real alpha surface.
+                    # The WinForms chroma key below then reveals the desktop
+                    # instead of WebView2's default white backing layer.
+                    transparent=avatar_transparent,
+                    background_color=(
+                        WINDOWS_TRANSPARENCY_KEY
+                        if native_windows_transparency
+                        else "#0d0b16"
+                    ),
                     text_select=False,
                     zoomable=True,
                 )
                 self._avatar_window = avatar_window
+                if native_windows_transparency:
+                    self._attach_windows_transparency_before_show(avatar_window)
                 self._track_window_geometry(
                     avatar_window,
                     name="avatar",
@@ -774,10 +836,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Do not force the avatar stage above other windows.",
     )
+    avatar_transparency = parser.add_mutually_exclusive_group()
+    avatar_transparency.add_argument(
+        "--transparent-avatar-window",
+        dest="avatar_transparent_window",
+        action="store_true",
+        help="Use a transparent avatar client area for this launch.",
+    )
+    avatar_transparency.add_argument(
+        "--opaque-avatar-window",
+        dest="avatar_transparent_window",
+        action="store_false",
+        help="Use the normal opaque avatar stage for this launch.",
+    )
     parser.set_defaults(
         maximized=None,
         open_avatar_window=None,
         avatar_always_on_top=None,
+        avatar_transparent_window=None,
         avatar_maximized=None,
     )
     parser.add_argument("--avatar-width", type=int, default=None)
@@ -872,6 +948,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         debug=arguments.debug,
         open_avatar_window=arguments.open_avatar_window,
         avatar_always_on_top=arguments.avatar_always_on_top,
+        avatar_transparent_window=arguments.avatar_transparent_window,
         avatar_width=arguments.avatar_width,
         avatar_height=arguments.avatar_height,
         avatar_x=arguments.avatar_x,
