@@ -5,8 +5,9 @@ Project Akira talks to language-model implementations through
 
 The interface keeps conversation, Discord, and future game integrations
 independent from a specific inference server. LM Studio is implemented by `ai.lm_studio_backend.LMStudioBackend`; the
-OpenAI-compatible transport remains available for other external servers. Later
-v0.5 issues can add managed llama.cpp without changing callers.
+OpenAI-compatible transport remains available for other external servers, and
+`ai.llama_cpp_backend.LlamaCppBackend` owns a local llama-server process without
+changing conversation callers.
 
 ## Required contract
 

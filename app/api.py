@@ -660,6 +660,16 @@ def create_app(
                 discord_controller.shutdown()
             backend_runtime.shutdown()
 
+            # Close the process-wide LLM, then catch any additional managed
+            # llama.cpp processes created for independent conversation contexts.
+            from ai.llm import invalidate_default_llm
+            from ai.llama_cpp_backend import (
+                stop_all_managed_llama_cpp_processes,
+            )
+
+            invalidate_default_llm()
+            stop_all_managed_llama_cpp_processes(timeout=5.0)
+
     application = FastAPI(
         title="Project Akira API",
         version="0.2.0-alpha",
@@ -1241,9 +1251,10 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(error)) from error
 
         updated = update_settings(normalized)
-        from ai.llm import invalidate_default_llm
+        from app.llm_runtime import retire_llm_runtime_contexts
 
-        context_reset = invalidate_default_llm()
+        cleanup = retire_llm_runtime_contexts()
+        context_reset = cleanup.context_reset
         active_runtime.events.publish(
             "model.changed",
             {
@@ -1769,11 +1780,29 @@ def create_app(
             raise
 
         changed_sections = sorted(normalized)
+        cleanup = None
+        if "llm" in normalized:
+            from app.llm_runtime import retire_llm_runtime_contexts
+
+            cleanup = retire_llm_runtime_contexts()
+
         restart_required = active_runtime.service_loaded
         event_data: dict[str, Any] = {
             "changed_sections": changed_sections,
             "restart_required": restart_required,
         }
+        if cleanup is not None:
+            event_data.update(
+                {
+                    "context_reset": cleanup.context_reset,
+                    "discord_sessions_reset": (
+                        cleanup.discord_sessions_reset
+                    ),
+                    "managed_processes_stopped": (
+                        cleanup.managed_processes_stopped
+                    ),
+                }
+            )
         if startup_state is not None:
             event_data["startup"] = startup_state.to_dict()
             active_runtime.events.publish(

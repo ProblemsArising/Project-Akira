@@ -297,8 +297,18 @@ class ApiBackendTests(unittest.TestCase):
         _ = self.runtime.service
         self.assertFalse(self.fake_service.stop_requested)
 
-        self.client_context.__exit__(None, None, None)
+        with mock.patch(
+            "ai.llm.invalidate_default_llm",
+            return_value=True,
+        ) as invalidate, mock.patch(
+            "ai.llama_cpp_backend.stop_all_managed_llama_cpp_processes",
+            return_value=1,
+        ) as stop_managed:
+            self.client_context.__exit__(None, None, None)
+
         self.assertTrue(self.fake_service.stop_requested)
+        invalidate.assert_called_once_with()
+        stop_managed.assert_called_once_with(timeout=5.0)
 
         # Avoid closing the same context twice in tearDown.
         self.client_context = _NoopContext()
