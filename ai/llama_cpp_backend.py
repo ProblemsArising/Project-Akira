@@ -68,6 +68,25 @@ class LlamaCppProcessConfig:
         return f"http://{self.authority}/health"
 
 
+@dataclass(frozen=True, slots=True)
+class ManagedLlamaCppProcessSnapshot:
+    """Read-only state for one llama-server owned by Project Akira."""
+
+    pid: int | None
+    running: bool
+    exit_code: int | None
+    base_url: str
+    health_url: str
+    model_alias: str
+    model_path: str
+    executable: str
+    log_file: str
+    context_size: int
+    gpu_layers: str
+    threads: int
+    parallel_slots: int
+
+
 PopenFactory = Callable[..., Any]
 HealthProbe = Callable[[str], bool]
 PortProbe = Callable[[str, int], bool]
@@ -85,6 +104,50 @@ def _register_active_process(process: Any) -> None:
 def _unregister_active_process(process: Any) -> None:
     with _ACTIVE_PROCESS_LOCK:
         _ACTIVE_PROCESSES.discard(process)
+
+
+def managed_llama_cpp_snapshot() -> tuple[ManagedLlamaCppProcessSnapshot, ...]:
+    """Return managed process state without starting or stopping a server."""
+
+    with _ACTIVE_PROCESS_LOCK:
+        processes = tuple(_ACTIVE_PROCESSES)
+
+    snapshots: list[ManagedLlamaCppProcessSnapshot] = []
+    for owner in processes:
+        config = getattr(owner, "config", None)
+        if config is None:
+            continue
+
+        process = getattr(owner, "_process", None)
+        exit_code: int | None = None
+        if process is not None:
+            try:
+                exit_code = process.poll()
+            except Exception:
+                exit_code = None
+        running = process is not None and exit_code is None
+        pid = getattr(process, "pid", None) if process is not None else None
+
+        snapshots.append(
+            ManagedLlamaCppProcessSnapshot(
+                pid=int(pid) if pid is not None else None,
+                running=running,
+                exit_code=(
+                    int(exit_code) if exit_code is not None else None
+                ),
+                base_url=config.base_url,
+                health_url=config.health_url,
+                model_alias=config.model_alias,
+                model_path=str(config.model_path),
+                executable=str(config.executable),
+                log_file=str(config.log_file),
+                context_size=int(config.context_size),
+                gpu_layers=str(config.gpu_layers),
+                threads=int(config.threads),
+                parallel_slots=int(config.parallel_slots),
+            )
+        )
+    return tuple(snapshots)
 
 
 def stop_all_managed_llama_cpp_processes(timeout: float = 10.0) -> int:
