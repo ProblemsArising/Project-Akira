@@ -1,0 +1,25 @@
+{
+  "default_preset_id": "ultra",
+  "presets": {
+    "high": {
+      "context_size": 8192,
+      "gpu_layers": "all",
+      "threads": 16
+    },
+    "low": {
+      "context_size": 4096,
+      "gpu_layers": "0",
+      "threads": 4
+    },
+    "medium": {
+      "context_size": 4096,
+      "gpu_layers": "auto",
+      "threads": 16
+    },
+    "ultra": {
+      "context_size": 16384,
+      "gpu_layers": "all",
+      "threads": 16
+    }
+  }
+}

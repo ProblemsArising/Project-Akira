@@ -223,6 +223,13 @@
           });
           const activeLabel = document.getElementById("activeModelLabel");
           if (activeLabel) activeLabel.textContent = result.model_alias;
+          window.dispatchEvent(new CustomEvent("akira:model-config-changed", {
+            detail: {
+              backend: result.backend,
+              model: result.model_alias,
+              model_path: result.model_path,
+            },
+          }));
           showNotice(`${model.filename} will start with managed llama.cpp on the next message.`, "success");
           await refresh();
         } catch (error) {

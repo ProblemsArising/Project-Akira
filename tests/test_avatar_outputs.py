@@ -14,7 +14,7 @@ from avatar.output import (
     resolve_avatar_outputs,
     vmc_output_enabled,
 )
-from config.settings import AppSettings, load_settings
+from config.settings import CURRENT_SCHEMA_VERSION, AppSettings, load_settings
 
 
 class AvatarOutputSelectionTests(unittest.TestCase):
@@ -65,7 +65,7 @@ class AvatarOutputSelectionTests(unittest.TestCase):
             ):
                 settings = load_settings(settings_file)
 
-            self.assertEqual(settings.schema_version, 4)
+            self.assertEqual(settings.schema_version, CURRENT_SCHEMA_VERSION)
             self.assertEqual(settings.avatar.backend, "both")
 
 
