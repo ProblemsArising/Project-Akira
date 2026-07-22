@@ -27,7 +27,7 @@ _NULLABLE_TYPES: dict[tuple[str, str], tuple[type, ...]] = {
 }
 
 _ENUMS: dict[tuple[str, str], set[str]] = {
-    ("llm", "backend"): {"lm_studio", "openai_compatible"},
+    ("llm", "backend"): {"llama_cpp", "lm_studio", "openai_compatible"},
     ("llm", "reasoning_mode"): {"off", "auto", "low", "medium", "high", "on"},
     ("stt", "device"): {"auto", "cpu", "cuda"},
     ("stt", "compute_type"): {
@@ -50,6 +50,10 @@ _RANGES: dict[tuple[str, str], tuple[float | None, float | None]] = {
     ("llm", "empty_response_retries"): (0, 10),
     ("llm", "retry_token_multiplier"): (1.0, 10.0),
     ("llm", "max_retry_tokens"): (1, 65536),
+    ("llm", "llama_cpp_port"): (1, 65535),
+    ("llm", "llama_cpp_context_size"): (256, 1048576),
+    ("llm", "llama_cpp_threads"): (-1, 512),
+    ("llm", "llama_cpp_startup_timeout_seconds"): (1.0, 600.0),
     ("stt", "beam_size"): (1, 50),
     ("audio", "sample_rate"): (8000, 384000),
     ("audio", "channels"): (1, 8),

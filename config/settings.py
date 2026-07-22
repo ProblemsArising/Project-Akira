@@ -76,6 +76,20 @@ class LLMSettings:
     # native /api/v1/chat endpoint so the preference is actually enforced.
     reasoning_mode: str = "off"
 
+    # Managed llama.cpp settings. Model downloads and automatic hardware
+    # presets are introduced by later v0.5 issues; these paths are manual for
+    # the initial backend implementation.
+    llama_cpp_executable: str = ""
+    llama_cpp_model_path: str = ""
+    llama_cpp_model_alias: str = "akira-local"
+    llama_cpp_host: str = "127.0.0.1"
+    llama_cpp_port: int = 8080
+    llama_cpp_context_size: int = 8192
+    llama_cpp_gpu_layers: str = "auto"
+    llama_cpp_threads: int = -1
+    llama_cpp_startup_timeout_seconds: float = 120.0
+    llama_cpp_extra_args: list[str] = field(default_factory=list)
+
 
 @dataclass
 class PersonalitySettings:

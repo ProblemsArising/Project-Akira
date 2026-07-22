@@ -452,6 +452,7 @@ def create_llm_backend(
     *,
     client: Any | None = None,
     native_client: Any | None = None,
+    llama_process: Any | None = None,
 ) -> LLMBackend:
     """Create the configured backend through the shared backend contract."""
 
@@ -469,6 +470,15 @@ def create_llm_backend(
             native_client=native_client,
         )
 
+    if backend_id == "llama_cpp":
+        from .llama_cpp_backend import LlamaCppBackend
+
+        return LlamaCppBackend(
+            resolved,
+            client=client,
+            process=llama_process,
+        )
+
     if backend_id == "openai_compatible":
         return LocalLLM(
             resolved,
@@ -478,7 +488,8 @@ def create_llm_backend(
 
     raise ValueError(
         "Unsupported LLM backend "
-        f"{backend_id!r}. Choose 'lm_studio' or 'openai_compatible'."
+        f"{backend_id!r}. Choose 'lm_studio', 'llama_cpp', or "
+        "'openai_compatible'."
     )
 
 

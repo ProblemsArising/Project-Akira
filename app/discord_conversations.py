@@ -366,6 +366,14 @@ class DiscordConversationSessions:
         with self._lock:
             return self._services.pop(user_id, None) is not None
 
+    def reset_runtime_sessions(self) -> int:
+        """Drop all runtime services while preserving saved mappings."""
+
+        with self._lock:
+            count = len(self._services)
+            self._services.clear()
+        return count
+
     def clear_user(self, user_or_id: object) -> bool:
         """Drop both the in-memory service and its saved mapping."""
 
@@ -419,3 +427,13 @@ def get_discord_conversation_sessions() -> DiscordConversationSessions:
         if _DEFAULT_SESSIONS is None:
             _DEFAULT_SESSIONS = _create_default_sessions()
         return _DEFAULT_SESSIONS
+
+
+def reset_discord_conversation_sessions() -> int:
+    """Drop active Discord LLM contexts without deleting conversation maps."""
+
+    with _DEFAULT_SESSIONS_LOCK:
+        sessions = _DEFAULT_SESSIONS
+    if sessions is None:
+        return 0
+    return sessions.reset_runtime_sessions()
