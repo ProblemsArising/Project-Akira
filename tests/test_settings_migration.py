@@ -28,7 +28,7 @@ class SettingsMigrationTests(unittest.TestCase):
         defaults = AppSettings()
         self.assertEqual(defaults.llm.max_tokens, 1024)
         self.assertEqual(defaults.llm.reasoning_mode, "off")
-        self.assertEqual(defaults.schema_version, 3)
+        self.assertEqual(defaults.schema_version, 4)
 
     def test_old_generated_defaults_are_upgraded(self) -> None:
         self.settings_file.write_text(
@@ -48,12 +48,12 @@ class SettingsMigrationTests(unittest.TestCase):
 
         self.assertEqual(settings.llm.max_tokens, 1024)
         self.assertEqual(settings.llm.reasoning_mode, "off")
-        self.assertEqual(settings.schema_version, 3)
+        self.assertEqual(settings.schema_version, 4)
 
         saved = json.loads(self.settings_file.read_text(encoding="utf-8"))
         self.assertEqual(saved["llm"]["max_tokens"], 1024)
         self.assertEqual(saved["llm"]["reasoning_mode"], "off")
-        self.assertEqual(saved["schema_version"], 3)
+        self.assertEqual(saved["schema_version"], 4)
 
     def test_custom_token_limit_is_preserved(self) -> None:
         self.settings_file.write_text(
@@ -73,7 +73,7 @@ class SettingsMigrationTests(unittest.TestCase):
 
         self.assertEqual(settings.llm.max_tokens, 768)
         self.assertEqual(settings.llm.reasoning_mode, "low")
-        self.assertEqual(settings.schema_version, 3)
+        self.assertEqual(settings.schema_version, 4)
 
 
 if __name__ == "__main__":

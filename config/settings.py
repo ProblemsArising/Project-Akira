@@ -20,7 +20,7 @@ from app.paths import PROJECT_ROOT, USER_DATA_ROOT
 
 DEFAULT_SETTINGS_FILE = USER_DATA_ROOT / "settings.json"
 SETTINGS_ENV_VAR = "AKIRA_SETTINGS_FILE"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -123,7 +123,7 @@ class TTSSettings:
 @dataclass
 class AvatarSettings:
     enabled: bool = True
-    backend: str = "vmc"
+    backend: str = "embedded"
     vmc_ip: str = "127.0.0.1"
     vmc_port: int = 39539
     face_blend_fps: int = 120
@@ -258,8 +258,23 @@ def _migrate_settings_data(data: Mapping[str, Any]) -> dict[str, Any]:
             llm["reasoning_mode"] = "off"
 
         migrated["llm"] = llm
-        migrated["schema_version"] = 3
 
+    if version < 4:
+        avatar = dict(migrated.get("avatar") or {})
+
+        # Before the embedded renderer, ``vmc`` was the only active backend.
+        # Existing users were already receiving both VMC output and embedded
+        # WebUI events after v0.4 work began, so preserve that behavior as
+        # ``both`` rather than silently turning either output off.
+        legacy_backend = avatar.get("backend")
+        if legacy_backend == "vmc":
+            avatar["backend"] = "both"
+        elif legacy_backend not in {"embedded", "both", "disabled"}:
+            avatar["backend"] = "embedded"
+
+        migrated["avatar"] = avatar
+
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
     return migrated
 
 def _from_dict(data: Any) -> AppSettings:

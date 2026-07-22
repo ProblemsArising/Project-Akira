@@ -8,7 +8,7 @@
     stt: { label: "Speech recognition", description: "Whisper model, device, language, and decoding options." },
     audio: { label: "Microphone", description: "Recording, VAD sensitivity, and speech timing." },
     tts: { label: "Voice", description: "System TTS voice, speed, and volume." },
-    avatar: { label: "Avatar", description: "VMC connection, mouth sync, expressions, and body motion." },
+    avatar: { label: "Avatar", description: "Built-in VRM animation and optional VMC/VSeeFace compatibility output." },
     memory: { label: "Memory", description: "Long-term memory size and context limits." },
   };
 
@@ -52,10 +52,19 @@
     "tts.rate": { label: "Speech speed", min: 50, max: 500, step: 5 },
     "tts.volume": { label: "Volume", min: 0, max: 1, step: 0.05 },
 
-    "avatar.enabled": { label: "Enable avatar output" },
-    "avatar.backend": { label: "Avatar backend", options: ["vmc", "disabled"] },
-    "avatar.vmc_ip": { label: "VMC address" },
-    "avatar.vmc_port": { label: "VMC port", min: 1, max: 65535, step: 1 },
+    "avatar.enabled": { label: "Enable avatar animation output" },
+    "avatar.backend": {
+      label: "Avatar output",
+      description: "Choose the built-in renderer, VMC/VSeeFace, both outputs, or disable animation. Restart Akira after changing VMC output.",
+      options: [
+        { value: "embedded", label: "Built-in avatar" },
+        { value: "both", label: "Built-in avatar + VMC" },
+        { value: "vmc", label: "VMC only" },
+        { value: "disabled", label: "Disabled" },
+      ],
+    },
+    "avatar.vmc_ip": { label: "VMC address", description: "Receiver address used by VSeeFace or another VMC application.", advanced: true },
+    "avatar.vmc_port": { label: "VMC port", min: 1, max: 65535, step: 1, advanced: true },
     "avatar.mouth_start_delay_seconds": { label: "Mouth start delay", min: 0, max: 10, step: 0.01 },
     "avatar.mouth_end_delay_seconds": { label: "Mouth end delay", min: 0, max: 10, step: 0.01 },
     "avatar.mouth_scale": { label: "Mouth movement", min: 0, max: 3, step: 0.05 },

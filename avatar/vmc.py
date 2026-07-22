@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from config.settings import get_settings
+from avatar.output import vmc_output_enabled
 
 try:
     from pythonosc.udp_client import SimpleUDPClient
@@ -1369,7 +1370,11 @@ class VMCAvatarController:
                     pass
 
 
-_controller = VMCAvatarController(enabled=_AVATAR_SETTINGS.enabled and _AVATAR_SETTINGS.backend == "vmc")
+_controller = VMCAvatarController(
+    ip=VSEEFACE_IP,
+    port=VSEEFACE_PORT,
+    enabled=vmc_output_enabled(_AVATAR_SETTINGS),
+)
 atexit.register(_controller.shutdown)
 
 

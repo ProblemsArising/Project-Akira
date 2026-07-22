@@ -2,6 +2,7 @@ import { EmbeddedVRMRenderer } from "/static/avatar/renderer.js";
 import { TextExpressionPlayer } from "/static/avatar/expressions.js";
 import { TextVisemePlayer } from "/static/avatar/visemes.js";
 import { TextBodyPosePlayer } from "/static/avatar/poses.js";
+import { avatarOutputLabel, resolveAvatarOutputs } from "/static/avatar/output.js";
 
 window.__akiraAvatarAppStarted = true;
 
@@ -33,6 +34,7 @@ const state = {
   listening: false,
   model: null,
   modelLoading: false,
+  output: resolveAvatarOutputs({ backend: "embedded", enabled: true }),
 };
 
 const COPY = {
@@ -110,6 +112,43 @@ async function readJson(response) {
   return payload;
 }
 
+function stopEmbeddedAnimation(reset = true) {
+  if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
+  if (bodyPosePlayer) bodyPosePlayer.cancel(reset);
+  if (expressionPlayer) expressionPlayer.cancel(reset);
+  if (visemePlayer) visemePlayer.stop();
+}
+
+function refreshOutputDescription() {
+  document.body.dataset.avatarBackend = state.output.backend;
+  if (!state.model || !document.body.classList.contains("model-loaded")) {
+    elements.rendererText.textContent = avatarOutputLabel(state.output);
+    return;
+  }
+
+  if (!state.output.embedded) {
+    elements.rendererText.textContent = avatarOutputLabel(state.output);
+    return;
+  }
+
+  const capabilities = embeddedRenderer
+    ? embeddedRenderer.getExpressionCapabilities()
+    : { face: [] };
+  const idleCapabilities = embeddedRenderer
+    ? embeddedRenderer.getIdleCapabilities()
+    : { enabled: false };
+  const poseCapabilities = embeddedRenderer
+    ? embeddedRenderer.getBodyPoseCapabilities()
+    : { enabled: false };
+  const faceLabel = capabilities.face.length > 0
+    ? " · natural visemes + expressions"
+    : " · natural visemes · no face presets";
+  const idleLabel = idleCapabilities.enabled ? " · idle" : "";
+  const poseLabel = poseCapabilities.enabled ? " · poses" : "";
+  const vmcLabel = state.output.vmc ? " + VMC" : "";
+  elements.rendererText.textContent = `Embedded VRM${faceLabel}${idleLabel}${poseLabel}${vmcLabel}`;
+}
+
 async function syncAvatarSettings() {
   if (!visemePlayer && !expressionPlayer && !bodyPosePlayer && !embeddedRenderer) return;
   try {
@@ -119,10 +158,17 @@ async function syncAvatarSettings() {
       ...(rootSettings.avatar || {}),
       tts_rate: rootSettings.tts && rootSettings.tts.rate,
     };
-    if (embeddedRenderer) embeddedRenderer.configureIdle(settings);
-    if (bodyPosePlayer) bodyPosePlayer.configure(settings);
-    if (expressionPlayer) expressionPlayer.configure(settings);
-    if (visemePlayer) visemePlayer.configure(settings);
+    state.output = resolveAvatarOutputs(settings);
+    const embeddedSettings = {
+      ...settings,
+      enabled: state.output.embedded,
+    };
+    if (embeddedRenderer) embeddedRenderer.configureIdle(embeddedSettings);
+    if (bodyPosePlayer) bodyPosePlayer.configure(embeddedSettings);
+    if (expressionPlayer) expressionPlayer.configure(embeddedSettings);
+    if (visemePlayer) visemePlayer.configure(embeddedSettings);
+    if (!state.output.embedded) stopEmbeddedAnimation(true);
+    refreshOutputDescription();
   } catch (error) {
     console.warn("Avatar animation settings could not be loaded", error);
   }
@@ -157,13 +203,7 @@ async function loadConfiguredModel(model) {
     const sizeText = formatBytes(model.size_bytes);
     const capabilities = embeddedRenderer.getExpressionCapabilities();
     const hasFaceExpressions = capabilities.face.length > 0;
-    const idleCapabilities = embeddedRenderer.getIdleCapabilities();
-    const idleLabel = idleCapabilities.enabled ? " · idle" : "";
-    const poseCapabilities = embeddedRenderer.getBodyPoseCapabilities();
-    const poseLabel = poseCapabilities.enabled ? " · poses" : "";
-    elements.rendererText.textContent = hasFaceExpressions
-      ? `Embedded VRM · natural visemes + expressions${idleLabel}${poseLabel}`
-      : `Embedded VRM · natural visemes${idleLabel}${poseLabel} · no face presets`;
+    refreshOutputDescription();
     elements.modelText.textContent = [model.filename, versionText, sizeText]
       .filter(Boolean)
       .join(" · ");
@@ -300,6 +340,10 @@ function handleEvent(event) {
       break;
     case "chat.reply_ready":
       setStage(data.will_speak ? "speaking" : "idle");
+      if (!state.output.embedded) {
+        stopEmbeddedAnimation(true);
+        break;
+      }
       if (embeddedRenderer) embeddedRenderer.setSpeaking(Boolean(data.will_speak));
       if (bodyPosePlayer) {
         bodyPosePlayer.start(
@@ -416,6 +460,14 @@ window.addEventListener("beforeunload", () => {
   if (embeddedRenderer) embeddedRenderer.dispose();
 });
 
-syncAvatarSettings();
-syncModel();
-connect();
+async function startAvatarApp() {
+  await syncAvatarSettings();
+  await syncModel();
+  connect();
+}
+
+startAvatarApp().catch((error) => {
+  console.error("Avatar application could not start", error);
+  setConnection(false, "Startup failed");
+  setStage("error", error.message || "Avatar startup failed.");
+});

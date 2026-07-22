@@ -61,7 +61,7 @@ class AvatarBodyPoseTests(unittest.TestCase):
         source = (AVATAR_ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn("TextBodyPosePlayer", source)
-        self.assertIn("bodyPosePlayer.configure(settings)", source)
+        self.assertIn("bodyPosePlayer.configure(embeddedSettings)", source)
         self.assertIn("bodyPosePlayer.start(", source)
         self.assertIn("bodyPosePlayer.complete()", source)
         self.assertGreaterEqual(source.count("bodyPosePlayer.cancel("), 4)
