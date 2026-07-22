@@ -4,9 +4,9 @@ Project Akira talks to language-model implementations through
 `ai.llm_backend.LLMBackend`.
 
 The interface keeps conversation, Discord, and future game integrations
-independent from a specific inference server. The current implementation still
-uses the existing LM Studio/OpenAI-compatible client; later v0.5 issues can add
-managed llama.cpp without changing callers.
+independent from a specific inference server. LM Studio is implemented by `ai.lm_studio_backend.LMStudioBackend`; the
+OpenAI-compatible transport remains available for other external servers. Later
+v0.5 issues can add managed llama.cpp without changing callers.
 
 ## Required contract
 
@@ -25,9 +25,10 @@ member.
 
 ## Factory boundary
 
-Call `ai.llm.create_llm_backend()` instead of constructing the current
-implementation directly. The factory currently returns `LocalLLM` and will
-become the selection point for the managed llama.cpp backend.
+Call `ai.llm.create_llm_backend()` instead of constructing a transport
+directly. The factory selects `LMStudioBackend` for `lm_studio`, preserves the
+OpenAI-compatible implementation for `openai_compatible`, and is the selection
+point for the upcoming managed llama.cpp backend.
 
 `ConversationService.from_default_components()` and
 `ConversationService.from_text_components()` also accept an optional
