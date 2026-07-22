@@ -39,7 +39,7 @@ _ENUMS: dict[tuple[str, str], set[str]] = {
         "int8_float16",
         "int8_float32",
     },
-    ("avatar", "backend"): {"vmc", "disabled"},
+    ("avatar", "backend"): {"embedded", "vmc", "both", "disabled"},
 }
 
 _RANGES: dict[tuple[str, str], tuple[float | None, float | None]] = {

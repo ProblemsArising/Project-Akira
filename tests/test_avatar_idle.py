@@ -53,7 +53,7 @@ class AvatarIdleTests(unittest.TestCase):
     def test_avatar_events_configure_idle_and_speaking_boost(self) -> None:
         source = (AVATAR_ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn("embeddedRenderer.configureIdle(settings)", source)
+        self.assertIn("embeddedRenderer.configureIdle(embeddedSettings)", source)
         self.assertIn("embeddedRenderer.getIdleCapabilities()", source)
         self.assertIn("embeddedRenderer.setSpeaking(Boolean(data.will_speak))", source)
         self.assertGreaterEqual(
