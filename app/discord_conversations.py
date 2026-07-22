@@ -385,11 +385,11 @@ class DiscordConversationSessions:
 def _create_default_sessions() -> DiscordConversationSessions:
     def create_service(user_id: int) -> ConversationServiceLike:
         del user_id
-        from ai.llm import LocalLLM
+        from ai.llm import create_llm_backend
         from app.conversation import ConversationService
         from app.history import get_history_store
 
-        llm = LocalLLM()
+        llm = create_llm_backend()
         return ConversationService(
             recorder=lambda: None,
             transcriber=lambda audio_file: "",

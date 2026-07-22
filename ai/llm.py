@@ -9,6 +9,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 from config.settings import AppSettings, get_settings
+from .llm_backend import (
+    LLMBackend,
+    LLMBackendInfo,
+    backend_display_name,
+    normalize_backend_id,
+)
 from .memory import build_memory_context, remember_turn
 from .personality import get_personality
 
@@ -57,6 +63,17 @@ class LocalLLM:
             }
         ]
         self._lock = threading.RLock()
+
+    @property
+    def info(self) -> LLMBackendInfo:
+        """Describe the currently configured transport implementation."""
+
+        backend_id = normalize_backend_id(self.llm_settings.backend)
+        return LLMBackendInfo(
+            backend_id=backend_id,
+            display_name=backend_display_name(backend_id),
+            managed=False,
+        )
 
     def close(self) -> None:
         """Release HTTP clients owned by this LLM instance."""
@@ -430,6 +447,26 @@ class LocalLLM:
             )
 
 
+def create_llm_backend(
+    settings: AppSettings | None = None,
+    *,
+    client: Any | None = None,
+    native_client: Any | None = None,
+) -> LLMBackend:
+    """Create the configured backend through the shared backend contract.
+
+    The current factory retains Project Akira's existing LM Studio and
+    OpenAI-compatible implementation. Later v0.5 issues can select managed
+    backends here without changing conversation or Discord orchestration.
+    """
+
+    return LocalLLM(
+        settings,
+        client=client,
+        native_client=native_client,
+    )
+
+
 _DEFAULT_LLM: LocalLLM | None = None
 _DEFAULT_FINGERPRINT: tuple[Any, ...] | None = None
 _DEFAULT_LOCK = threading.RLock()
@@ -458,7 +495,7 @@ def get_default_llm(*, reload: bool = False) -> LocalLLM:
     fingerprint = _settings_fingerprint(settings)
     with _DEFAULT_LOCK:
         if _DEFAULT_LLM is None or _DEFAULT_FINGERPRINT != fingerprint:
-            _DEFAULT_LLM = LocalLLM(settings)
+            _DEFAULT_LLM = create_llm_backend(settings)
             _DEFAULT_FINGERPRINT = fingerprint
         return _DEFAULT_LLM
 
