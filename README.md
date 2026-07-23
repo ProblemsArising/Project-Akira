@@ -265,9 +265,9 @@ Project-Akira/
 | v0.1 | Application foundation | Complete |
 | v0.2 | WebUI | Complete |
 | v0.3 | Desktop application | Complete |
-| v0.4 | Built-in avatar | Next |
-| v0.5 | Built-in LLM | Planned |
-| v0.6 | Built-in voice conversion | Planned |
+| v0.4 | Built-in avatar | Complete |
+| v0.5 | Built-in LLM | Complete |
+| v0.6 | Built-in voice conversion | Next |
 | v0.7 | Minecraft integration | Planned |
 
 Development is tracked through [GitHub issues](https://github.com/ProblemsArising/Project-Akira/issues) and [milestones](https://github.com/ProblemsArising/Project-Akira/milestones).
