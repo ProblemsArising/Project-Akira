@@ -68,6 +68,11 @@ from app.model_downloads import (
     ModelDownloadManager,
     get_model_download_manager,
 )
+from app.llama_cpp_runtime import (
+    LlamaCppRuntimeError,
+    LlamaCppRuntimeManager,
+    get_llama_cpp_runtime_manager,
+)
 from app.paths import resource_path, user_file_path
 from app.personalities import (
     PersonalityPreset,
@@ -140,6 +145,7 @@ PersonalityFactory = Callable[[], PersonalityStore]
 CalibrationFactory = Callable[..., Any]
 ModelBackendFactory = Callable[[], ModelBackendClient]
 ModelDownloadFactory = Callable[[], ModelDownloadManager]
+LlamaCppRuntimeFactory = Callable[[], LlamaCppRuntimeManager]
 
 
 class BackendRuntime:
@@ -154,6 +160,7 @@ class BackendRuntime:
         calibration_factory: CalibrationFactory | None = None,
         model_backend_factory: ModelBackendFactory | None = None,
         model_download_factory: ModelDownloadFactory | None = None,
+        llama_cpp_runtime_factory: LlamaCppRuntimeFactory | None = None,
         event_hub: EventHub | None = None,
     ) -> None:
         self._service_factory = service_factory
@@ -162,10 +169,12 @@ class BackendRuntime:
         self._calibration_factory = calibration_factory
         self._model_backend_factory = model_backend_factory
         self._model_download_factory = model_download_factory
+        self._llama_cpp_runtime_factory = llama_cpp_runtime_factory
         self._service: ConversationServiceLike | None = None
         self._history: ChatHistoryStore | None = None
         self._personalities: PersonalityStore | None = None
         self._model_downloads: ModelDownloadManager | None = None
+        self._llama_cpp_runtime: LlamaCppRuntimeManager | None = None
         self._events = event_hub or EventHub()
         self._lock = threading.RLock()
 
@@ -271,6 +280,18 @@ class BackendRuntime:
                     self._model_downloads = get_model_download_manager()
             return self._model_downloads
 
+    @property
+    def llama_cpp_runtime(self) -> LlamaCppRuntimeManager:
+        """Return the process-wide managed llama.cpp runtime installer lazily."""
+
+        with self._lock:
+            if self._llama_cpp_runtime is None:
+                if self._llama_cpp_runtime_factory is not None:
+                    self._llama_cpp_runtime = self._llama_cpp_runtime_factory()
+                else:
+                    self._llama_cpp_runtime = get_llama_cpp_runtime_manager()
+            return self._llama_cpp_runtime
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             service = self._service
@@ -288,12 +309,15 @@ class BackendRuntime:
         with self._lock:
             service = self._service
             model_downloads = self._model_downloads
+            llama_cpp_runtime = self._llama_cpp_runtime
 
         self._events.publish("system.shutdown", self.status())
         if service is not None:
             service.request_stop()
         if model_downloads is not None:
             model_downloads.shutdown()
+        if llama_cpp_runtime is not None:
+            llama_cpp_runtime.shutdown()
         self._events.close()
 
 
@@ -526,6 +550,46 @@ class LocalModelResponse(StrictModel):
     path: str
     size_bytes: int
     active: bool
+
+
+class LlamaCppRuntimeVariantResponse(StrictModel):
+    id: str
+    name: str
+    description: str
+    asset_count: int
+    recommended: bool
+
+
+class LlamaCppRuntimeJobResponse(StrictModel):
+    id: str
+    version: str
+    variant: str
+    status: str
+    current_asset: str | None = None
+    downloaded_bytes: int
+    total_bytes: int | None = None
+    error: str | None = None
+    executable: str | None = None
+    devices: list[str] | None = None
+    progress: float | None = None
+
+
+class LlamaCppRuntimeStatusResponse(StrictModel):
+    supported: bool
+    version: str
+    root: str
+    recommended_variant: str
+    variants: list[LlamaCppRuntimeVariantResponse]
+    installed: bool
+    installed_version: str | None = None
+    installed_variant: str | None = None
+    executable: str | None = None
+    devices: list[str]
+    job: LlamaCppRuntimeJobResponse | None = None
+
+
+class LlamaCppRuntimeInstallRequest(StrictModel):
+    variant: str = Field(default="recommended", min_length=1, max_length=32)
 
 
 class ModelDownloadListResponse(StrictModel):
@@ -2135,6 +2199,105 @@ def create_app(
             {"filename": unquote(filename)},
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get(
+        "/api/llama-cpp/runtime",
+        response_model=LlamaCppRuntimeStatusResponse,
+        tags=["models"],
+    )
+    def llama_cpp_runtime_status(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> LlamaCppRuntimeStatusResponse:
+        """Report the pinned managed runtime and active install operation."""
+
+        return LlamaCppRuntimeStatusResponse(
+            **active_runtime.llama_cpp_runtime.snapshot()
+        )
+
+    @application.post(
+        "/api/llama-cpp/runtime/install",
+        response_model=LlamaCppRuntimeStatusResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["models"],
+    )
+    def install_llama_cpp_runtime(
+        payload: LlamaCppRuntimeInstallRequest,
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> LlamaCppRuntimeStatusResponse:
+        """Install or repair a pinned official llama.cpp runtime."""
+
+        context_reset = False
+        current_backend = str(get_settings().llm.backend or "").strip().casefold()
+        if current_backend == "llama_cpp":
+            from app.llm_runtime import retire_llm_runtime_contexts
+
+            cleanup = retire_llm_runtime_contexts()
+            context_reset = bool(cleanup.context_reset)
+        try:
+            job = active_runtime.llama_cpp_runtime.start_install(payload.variant)
+        except LlamaCppRuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "llama_cpp.runtime.install_started",
+            {
+                "job_id": job.id,
+                "variant": job.variant,
+                "version": job.version,
+                "context_reset": context_reset,
+            },
+        )
+        return LlamaCppRuntimeStatusResponse(
+            **active_runtime.llama_cpp_runtime.snapshot()
+        )
+
+    @application.post(
+        "/api/llama-cpp/runtime/cancel",
+        response_model=LlamaCppRuntimeStatusResponse,
+        tags=["models"],
+    )
+    def cancel_llama_cpp_runtime_install(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> LlamaCppRuntimeStatusResponse:
+        """Cancel the active runtime operation while keeping partial archives."""
+
+        try:
+            job = active_runtime.llama_cpp_runtime.cancel()
+        except LlamaCppRuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "llama_cpp.runtime.install_cancelled",
+            {"job_id": job.id, "variant": job.variant},
+        )
+        return LlamaCppRuntimeStatusResponse(
+            **active_runtime.llama_cpp_runtime.snapshot()
+        )
+
+    @application.delete(
+        "/api/llama-cpp/runtime",
+        response_model=LlamaCppRuntimeStatusResponse,
+        tags=["models"],
+    )
+    def remove_llama_cpp_runtime(
+        active_runtime: BackendRuntime = Depends(_get_runtime),
+    ) -> LlamaCppRuntimeStatusResponse:
+        """Remove Project Akira-managed runtimes without touching GGUF models."""
+
+        context_reset = False
+        current_backend = str(get_settings().llm.backend or "").strip().casefold()
+        if current_backend == "llama_cpp":
+            from app.llm_runtime import retire_llm_runtime_contexts
+
+            cleanup = retire_llm_runtime_contexts()
+            context_reset = bool(cleanup.context_reset)
+        try:
+            snapshot = active_runtime.llama_cpp_runtime.remove()
+        except LlamaCppRuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        active_runtime.events.publish(
+            "llama_cpp.runtime.removed",
+            {"context_reset": context_reset},
+        )
+        return LlamaCppRuntimeStatusResponse(**snapshot)
 
     @application.get(
         "/api/personalities",

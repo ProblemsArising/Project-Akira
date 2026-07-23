@@ -34,3 +34,8 @@ data/discord_conversations.json
 
 # User-selected embedded VRM avatar
 data/avatar/
+
+# Managed llama.cpp runtime archives and extracted binaries
+data/runtimes/llama.cpp/
+
+/data/models/

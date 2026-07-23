@@ -4,6 +4,52 @@
   const layout = document.querySelector(".models-layout");
   if (!layout) return;
 
+  const runtimeCard = document.createElement("section");
+  runtimeCard.className = "download-manager-card runtime-manager-card";
+  runtimeCard.innerHTML = `
+    <div class="download-heading runtime-heading">
+      <div>
+        <p class="eyebrow">Managed llama.cpp</p>
+        <h3>Runtime installer</h3>
+        <p>Install a pinned official llama.cpp build and its required acceleration DLLs. Project Akira verifies every archive, tests <code>llama-server.exe --list-devices</code>, and selects the working executable automatically.</p>
+      </div>
+      <span id="runtimeStatusBadge" class="runtime-status-badge">Checking…</span>
+    </div>
+
+    <div class="runtime-controls">
+      <label class="download-field runtime-variant-field">
+        <span>Runtime variant</span>
+        <select id="runtimeVariantSelect" aria-label="llama.cpp runtime variant"></select>
+      </label>
+      <div class="runtime-actions">
+        <button id="runtimeInstallButton" class="button primary" type="button">Install recommended runtime</button>
+        <button id="runtimeCancelButton" class="button secondary" type="button" hidden>Cancel</button>
+        <button id="runtimeRemoveButton" class="button secondary danger" type="button" hidden>Remove managed runtime</button>
+      </div>
+    </div>
+
+    <div id="runtimeProgress" class="runtime-progress" hidden>
+      <div class="download-item-head">
+        <div>
+          <strong id="runtimeProgressTitle">Preparing runtime…</strong>
+          <small id="runtimeProgressAsset"></small>
+        </div>
+        <span id="runtimeProgressStatus" class="download-status"></span>
+      </div>
+      <div class="download-progress" aria-label="Runtime download progress"><span></span></div>
+      <span id="runtimeProgressBytes" class="download-size"></span>
+    </div>
+
+    <div class="runtime-details">
+      <div><span>Tested release</span><strong id="runtimeVersion">—</strong></div>
+      <div><span>Installed variant</span><strong id="runtimeInstalledVariant">Not installed</strong></div>
+      <div class="runtime-path-row"><span>Executable</span><code id="runtimeExecutable">Not configured</code></div>
+      <div class="runtime-path-row"><span>Detected devices</span><code id="runtimeDevices">—</code></div>
+    </div>
+    <p class="runtime-help">A manually selected executable still takes priority. You can keep using a custom build through Settings.</p>
+    <div id="runtimeNotice" class="download-notice" hidden></div>
+  `;
+
   const card = document.createElement("section");
   card.className = "download-manager-card";
   card.innerHTML = `
@@ -57,8 +103,30 @@
   `;
 
   const hero = layout.querySelector(".hero-card");
-  if (hero?.nextSibling) layout.insertBefore(card, hero.nextSibling);
+  if (hero?.nextSibling) layout.insertBefore(runtimeCard, hero.nextSibling);
+  else layout.appendChild(runtimeCard);
+  if (runtimeCard.nextSibling) layout.insertBefore(card, runtimeCard.nextSibling);
   else layout.appendChild(card);
+
+  const runtimeElements = {
+    status: runtimeCard.querySelector("#runtimeStatusBadge"),
+    variant: runtimeCard.querySelector("#runtimeVariantSelect"),
+    install: runtimeCard.querySelector("#runtimeInstallButton"),
+    cancel: runtimeCard.querySelector("#runtimeCancelButton"),
+    remove: runtimeCard.querySelector("#runtimeRemoveButton"),
+    progress: runtimeCard.querySelector("#runtimeProgress"),
+    progressTitle: runtimeCard.querySelector("#runtimeProgressTitle"),
+    progressAsset: runtimeCard.querySelector("#runtimeProgressAsset"),
+    progressStatus: runtimeCard.querySelector("#runtimeProgressStatus"),
+    progressBar: runtimeCard.querySelector("#runtimeProgress .download-progress"),
+    progressFill: runtimeCard.querySelector("#runtimeProgress .download-progress span"),
+    progressBytes: runtimeCard.querySelector("#runtimeProgressBytes"),
+    version: runtimeCard.querySelector("#runtimeVersion"),
+    installedVariant: runtimeCard.querySelector("#runtimeInstalledVariant"),
+    executable: runtimeCard.querySelector("#runtimeExecutable"),
+    devices: runtimeCard.querySelector("#runtimeDevices"),
+    notice: runtimeCard.querySelector("#runtimeNotice"),
+  };
 
   const elements = {
     form: card.querySelector("#modelDownloadForm"),
@@ -75,7 +143,11 @@
   };
 
   let pollTimer = null;
+  let runtimePollTimer = null;
   let busy = false;
+  let runtimeBusy = false;
+  let latestRuntimeSnapshot = null;
+  let lastRuntimeJobState = null;
 
   function formatBytes(value) {
     if (!Number.isFinite(value) || value < 0) return "—";
@@ -113,6 +185,119 @@
       throw new Error(detail);
     }
     return payload;
+  }
+
+  function runtimeOperationActive(job) {
+    return Boolean(job && [
+      "queued",
+      "downloading",
+      "verifying",
+      "extracting",
+      "validating",
+      "activating",
+    ].includes(job.status));
+  }
+
+  function runtimeVariantLabel(snapshot, variantId) {
+    return snapshot.variants?.find((item) => item.id === variantId)?.name || variantId || "—";
+  }
+
+  function showRuntimeNotice(message, kind = "info") {
+    runtimeElements.notice.textContent = message;
+    runtimeElements.notice.className = `download-notice ${kind}`;
+    runtimeElements.notice.hidden = false;
+  }
+
+  function renderRuntime(snapshot) {
+    latestRuntimeSnapshot = snapshot;
+    const previous = runtimeElements.variant.value;
+    runtimeElements.variant.replaceChildren();
+    for (const variant of snapshot.variants || []) {
+      const option = document.createElement("option");
+      option.value = variant.id;
+      option.textContent = `${variant.name}${variant.recommended ? " — recommended" : ""}`;
+      option.title = variant.description;
+      runtimeElements.variant.appendChild(option);
+    }
+    const preferred = previous && [...runtimeElements.variant.options].some((item) => item.value === previous)
+      ? previous
+      : snapshot.installed_variant || snapshot.recommended_variant;
+    runtimeElements.variant.value = preferred;
+
+    const job = snapshot.job;
+    const active = runtimeOperationActive(job);
+    const installed = Boolean(snapshot.installed);
+    runtimeElements.version.textContent = snapshot.version || "—";
+    runtimeElements.installedVariant.textContent = installed
+      ? runtimeVariantLabel(snapshot, snapshot.installed_variant)
+      : "Not installed";
+    runtimeElements.executable.textContent = snapshot.executable || "Not configured";
+    runtimeElements.executable.title = snapshot.executable || "";
+    runtimeElements.devices.textContent = snapshot.devices?.length
+      ? snapshot.devices.join(" · ")
+      : installed ? "No device output reported" : "—";
+    runtimeElements.devices.title = snapshot.devices?.join("\n") || "";
+
+    runtimeElements.status.textContent = !snapshot.supported
+      ? "Unsupported platform"
+      : active
+        ? job.status
+        : installed
+          ? "Installed"
+          : "Not installed";
+    runtimeElements.status.className = `runtime-status-badge${installed && !active ? " installed" : ""}${job?.status === "failed" ? " failed" : ""}`;
+
+    runtimeElements.install.disabled = runtimeBusy || active || !snapshot.supported;
+    runtimeElements.variant.disabled = runtimeBusy || active || !snapshot.supported;
+    runtimeElements.cancel.hidden = !active;
+    runtimeElements.cancel.disabled = runtimeBusy;
+    runtimeElements.remove.hidden = !installed || active;
+    runtimeElements.remove.disabled = runtimeBusy;
+    runtimeElements.install.textContent = installed
+      ? "Repair or replace runtime"
+      : "Install selected runtime";
+
+    runtimeElements.progress.hidden = !job;
+    if (job) {
+      const percent = Number.isFinite(job.progress) ? Math.round(job.progress * 100) : null;
+      runtimeElements.progressTitle.textContent = job.status === "installed"
+        ? "Runtime installed and selected"
+        : job.status === "failed"
+          ? "Runtime installation failed"
+          : `Installing ${runtimeVariantLabel(snapshot, job.variant)}`;
+      runtimeElements.progressAsset.textContent = job.current_asset || "Preparing files";
+      runtimeElements.progressStatus.textContent = job.status;
+      runtimeElements.progressFill.style.width = `${percent ?? 0}%`;
+      runtimeElements.progressBar.classList.toggle("indeterminate", percent === null && active);
+      runtimeElements.progressBytes.textContent = progressText(job);
+      if (job.error) showRuntimeNotice(job.error, "error");
+      const nextState = `${job.id}:${job.status}`;
+      if (lastRuntimeJobState !== nextState) {
+        if (job.status === "installed") {
+          showRuntimeNotice("llama.cpp was validated and selected as the managed executable.", "success");
+          window.dispatchEvent(new CustomEvent("akira:model-config-changed", { detail: { runtime: snapshot } }));
+        } else if (job.status === "cancelled") {
+          showRuntimeNotice("Runtime installation cancelled. Valid partial archives were kept for resume.");
+        }
+        lastRuntimeJobState = nextState;
+      }
+    }
+  }
+
+  function scheduleRuntimeRefresh(snapshot) {
+    if (runtimePollTimer) window.clearTimeout(runtimePollTimer);
+    runtimePollTimer = window.setTimeout(refreshRuntime, runtimeOperationActive(snapshot.job) ? 750 : 5000);
+  }
+
+  async function refreshRuntime() {
+    try {
+      const snapshot = await request("/api/llama-cpp/runtime");
+      renderRuntime(snapshot);
+      scheduleRuntimeRefresh(snapshot);
+    } catch (error) {
+      showRuntimeNotice(`Could not load llama.cpp runtime status: ${error.message}`, "error");
+      runtimePollTimer = window.setTimeout(refreshRuntime, 5000);
+    }
   }
 
   function progressText(job) {
@@ -277,6 +462,58 @@
     }
   }
 
+  runtimeElements.install.addEventListener("click", async () => {
+    if (runtimeBusy) return;
+    runtimeBusy = true;
+    runtimeElements.install.disabled = true;
+    runtimeElements.notice.hidden = true;
+    try {
+      await request("/api/llama-cpp/runtime/install", {
+        method: "POST",
+        body: JSON.stringify({ variant: runtimeElements.variant.value || "recommended" }),
+      });
+      showRuntimeNotice("Runtime download started. Project Akira will verify and test it before activation.", "success");
+      await refreshRuntime();
+    } catch (error) {
+      showRuntimeNotice(error.message, "error");
+    } finally {
+      runtimeBusy = false;
+      if (latestRuntimeSnapshot) renderRuntime(latestRuntimeSnapshot);
+    }
+  });
+
+  runtimeElements.cancel.addEventListener("click", async () => {
+    if (runtimeBusy) return;
+    runtimeBusy = true;
+    runtimeElements.cancel.disabled = true;
+    try {
+      const snapshot = await request("/api/llama-cpp/runtime/cancel", { method: "POST" });
+      renderRuntime(snapshot);
+    } catch (error) {
+      showRuntimeNotice(error.message, "error");
+    } finally {
+      runtimeBusy = false;
+      if (latestRuntimeSnapshot) renderRuntime(latestRuntimeSnapshot);
+    }
+  });
+
+  runtimeElements.remove.addEventListener("click", async () => {
+    if (runtimeBusy || !window.confirm("Remove the Project Akira-managed llama.cpp runtime? Manually selected runtimes are not affected.")) return;
+    runtimeBusy = true;
+    runtimeElements.remove.disabled = true;
+    try {
+      const snapshot = await request("/api/llama-cpp/runtime", { method: "DELETE" });
+      renderRuntime(snapshot);
+      showRuntimeNotice("Managed llama.cpp runtime removed. Your GGUF models were kept.", "success");
+      window.dispatchEvent(new CustomEvent("akira:model-config-changed", { detail: { runtime: snapshot } }));
+    } catch (error) {
+      showRuntimeNotice(error.message, "error");
+    } finally {
+      runtimeBusy = false;
+      if (latestRuntimeSnapshot) renderRuntime(latestRuntimeSnapshot);
+    }
+  });
+
   elements.form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy) return;
@@ -308,7 +545,9 @@
 
   window.addEventListener("beforeunload", () => {
     if (pollTimer) window.clearTimeout(pollTimer);
+    if (runtimePollTimer) window.clearTimeout(runtimePollTimer);
   });
 
+  refreshRuntime();
   refresh();
 })();
