@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -52,6 +53,7 @@ class ServerLike(Protocol):
 
 ServerFactory = Callable[[Any], ServerLike]
 ReadinessProbe = Callable[[str, float], bool]
+ManagedProcessCleanup = Callable[[float], Any]
 SettingsLoader = Callable[[], Any]
 SettingsUpdater = Callable[[Mapping[str, Any]], Any]
 TrayFactory = Callable[..., Any]
@@ -108,6 +110,25 @@ def _default_readiness_probe(url: str, timeout: float) -> bool:
     return False
 
 
+def _default_managed_process_cleanup(timeout: float) -> int:
+    """Stop managed llama.cpp children without importing AI services eagerly.
+
+    A managed server can only exist after :mod:`ai.llama_cpp_backend` has been
+    imported. Checking ``sys.modules`` therefore avoids initializing the LLM
+    stack during desktop shutdowns that never used the managed backend.
+    """
+
+    module = sys.modules.get("ai.llama_cpp_backend")
+    if module is None:
+        return 0
+
+    cleanup = getattr(module, "stop_all_managed_llama_cpp_processes", None)
+    if not callable(cleanup):
+        return 0
+
+    return int(cleanup(timeout=max(0.1, float(timeout))))
+
+
 class BackendServer:
     """Run Project Akira's FastAPI app in a managed background thread."""
 
@@ -120,6 +141,9 @@ class BackendServer:
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         server_factory: ServerFactory | None = None,
         readiness_probe: ReadinessProbe = _default_readiness_probe,
+        managed_process_cleanup: ManagedProcessCleanup = (
+            _default_managed_process_cleanup
+        ),
     ) -> None:
         self.host = str(host).strip() or DEFAULT_HOST
         self.port = int(port) if int(port) > 0 else find_available_port(self.host)
@@ -127,6 +151,7 @@ class BackendServer:
         self.startup_timeout = float(startup_timeout)
         self._server_factory = server_factory
         self._readiness_probe = readiness_probe
+        self._managed_process_cleanup = managed_process_cleanup
         self._server: ServerLike | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -181,20 +206,33 @@ class BackendServer:
         return self.url
 
     def stop(self, timeout: float = 8.0) -> None:
-        """Request a graceful Uvicorn/FastAPI shutdown and join its thread."""
+        """Stop FastAPI and any managed inference process it launched.
+
+        FastAPI's lifespan normally closes the active LLM while Uvicorn exits.
+        The explicit cleanup in ``finally`` is a last-resort guarantee for a
+        crashed or stuck server thread whose lifespan shutdown did not run.
+        """
 
         with self._lock:
             server = self._server
             thread = self._thread
+
+        try:
             if server is not None:
                 server.should_exit = True
 
-        if thread is not None and thread.is_alive():
-            thread.join(max(0.0, float(timeout)))
+            if thread is not None and thread.is_alive():
+                thread.join(max(0.0, float(timeout)))
+        finally:
+            try:
+                cleanup_timeout = min(5.0, max(0.1, float(timeout)))
+                self._managed_process_cleanup(cleanup_timeout)
+            except Exception as error:
+                print(f"⚠️ Could not stop managed llama.cpp server: {error}")
 
-        with self._lock:
-            self._thread = None
-            self._server = None
+            with self._lock:
+                self._thread = None
+                self._server = None
 
 
 class DesktopApplication:
