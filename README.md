@@ -5,54 +5,65 @@
 [![Python](https://img.shields.io/badge/python-3.10-3776AB)](https://www.python.org/)
 [![License](https://img.shields.io/github/license/ProblemsArising/Project-Akira)](LICENSE)
 
-**Project Akira is a local-first Windows AI companion with text and voice chat, persistent conversations, customizable personalities, audio controls, and optional avatar integration.**
+**Project Akira is a local-first Windows AI companion with text and voice chat, persistent conversations and memory, customizable personalities, a built-in VRM avatar, and multiple local language-model backends.**
 
-Akira combines a FastAPI backend, browser-based interface, native desktop windows, local speech transcription, text-to-speech, and configurable language-model backends in one application.
+Akira combines a FastAPI backend, browser-based interface, native desktop windows, local speech transcription, text-to-speech, managed llama.cpp inference, and optional Discord and VMC integration in one application.
 
 > [!NOTE]
-> Project Akira is under active development. Version 0.3 establishes the installable Windows desktop application. The next milestone focuses on a built-in avatar renderer.
+> Version 0.5 completes the **Built-in LLM** milestone. Project Akira can now install and manage its own llama.cpp runtime and GGUF model configuration, so LM Studio remains supported but is no longer required. The next milestone is **v0.6 — Built-in Voice Conversion**.
 
-## Features
+## Highlights
 
-### Desktop application
+### Local models and inference
 
-- Native Windows launcher
-- Main interface and separate avatar window
-- System tray controls
-- Saved window size and position
-- Optional launch at Windows startup
-- Per-user Windows installer and uninstaller
-- Start menu shortcut and optional desktop shortcut
+- Built-in managed llama.cpp backend
+- Managed llama.cpp runtime installer with NVIDIA CUDA 12, Vulkan, and CPU-only variants
+- Automatic runtime recommendation, validation, device detection, repair, and removal
+- Direct GGUF model downloads with resume, cancellation, optional SHA-256 verification, and GGUF validation
+- Editable Low, Medium, High, and Ultra hardware presets
+- Context-size, GPU-layer, and CPU-thread controls with estimated VRAM and system-RAM usage
+- Detection of every NVIDIA GPU and combined VRAM
+- Backend health checks for Managed llama.cpp, LM Studio, and generic OpenAI-compatible servers
+- Separate saved URLs and compatible reasoning controls for each backend
+- Automatic shutdown of Akira-managed inference processes when Project Akira exits
 
 ### Chat and customization
 
 - Text and microphone conversation
-- Streaming status updates
-- SQLite conversation history
+- Persistent SQLite conversation history
 - Conversation search, rename, resume, and deletion
+- Persistent short-term and long-term memory
 - Built-in and custom personality presets
-- Persistent settings and memory
-- Configurable reply speech
+- Streaming activity and status updates
+- Configurable spoken replies
+- Optional Discord bot integration for direct messages and notifications
 
-### Models and audio
+### Voice and audio
 
-- LM Studio integration
-- OpenAI-compatible API support
-- Model discovery, selection, loading, and unloading
-- Faster-Whisper speech-to-text
+- Local Faster-Whisper speech-to-text
 - Microphone voice-activity detection and calibration
 - Selectable input and output devices
 - Local `pyttsx3` text-to-speech
+- Independent controls for listening, transcription, and spoken replies
 
-### Avatar integration
+### Built-in avatar
 
-- Optional VMC output
-- VSeeFace-compatible avatar control
-- Speech-driven mouth movement
-- Text-selected facial expressions
-- Separate avatar display window
+- Embedded VRM 0.x and VRM 1.0 renderer
+- Persistent local VRM model selection
+- Text-estimated mouth visemes and reply-driven expressions
+- Procedural breathing, idle movement, and emotion-driven poses
+- Optional transparent always-on-top Windows overlay
+- Embedded, combined, VMC-only, and disabled output modes
+- Existing VMC/VSeeFace compatibility retained
 
-A built-in VRM renderer is planned for v0.4. Until then, full animated-avatar rendering requires an external VMC-compatible application such as VSeeFace.
+### Windows desktop application
+
+- Native Windows launcher with separate main and avatar windows
+- System tray controls and close-to-tray behavior
+- Saved window size and position
+- Optional launch at Windows startup
+- Per-user installer and uninstaller
+- Start menu shortcut and optional desktop shortcut
 
 ## Download and install
 
@@ -62,9 +73,7 @@ Download the latest Windows installer from the [Releases page](https://github.co
 ProjectAkira-Setup-<version>.exe
 ```
 
-Run the installer and launch **Project Akira** from the Start menu or the optional desktop shortcut.
-
-Project Akira installs for the current Windows user and does not require administrator privileges.
+Run the installer and launch **Project Akira** from the Start menu or the optional desktop shortcut. The installer is per-user and does not require administrator privileges.
 
 > [!WARNING]
 > Current release installers are not digitally signed. Windows SmartScreen may show an **Unknown publisher** warning.
@@ -74,13 +83,18 @@ Project Akira installs for the current Windows user and does not require adminis
 ### Installed release
 
 - Windows 10 or Windows 11, 64-bit
-- A configured language-model backend
-  - LM Studio is currently the easiest local option
-  - An OpenAI-compatible endpoint may also be used
-- Audio input/output devices for voice features
-- A VMC-compatible avatar application for external avatar rendering
+- Enough disk space, system RAM, and optional VRAM for the selected runtime and model
+- A language model provided through one of these backends:
+  - **Managed llama.cpp** — recommended for a self-contained local setup
+  - **LM Studio** — retained with native model discovery and management
+  - **OpenAI-compatible server** — local or remote
+- Audio input and output devices only when using voice features
+- A `.vrm` model only when using a custom embedded avatar
+- A Discord bot token and internet access only when enabling Discord integration
 
-An NVIDIA GPU is optional. GPU acceleration can improve local model and transcription performance, but available behavior depends on the selected backend and installed drivers.
+An NVIDIA GPU is optional. Project Akira can install a CUDA runtime for supported NVIDIA systems, a Vulkan runtime for compatible GPUs, or a CPU-only fallback. Actual model capacity and speed depend on the selected GGUF, context size, available memory, drivers, and other running applications.
+
+Language models are not bundled with the installer.
 
 ### Source development
 
@@ -93,15 +107,53 @@ Python 3.10.11 is the primary development version used by this project.
 
 ## First-time setup
 
-1. Install and open LM Studio or configure another compatible model backend.
-2. Load a chat model and start its local server.
-3. Launch Project Akira.
-4. Open **Models** and select the backend and model.
-5. Open **Audio** to choose and test microphone and output devices.
-6. Adjust personality, speech, avatar, and memory options under **Settings**.
+### Recommended: Managed llama.cpp
+
+1. Launch Project Akira and open **Models**.
+2. Select **Managed llama.cpp**.
+3. In **Runtime installer**, keep the recommended variant or choose CUDA 12, Vulkan, or CPU-only, then install it.
+4. Download a GGUF model from a direct HTTP/HTTPS URL or configure an existing local GGUF path.
+5. Select the model and apply a hardware preset.
+6. Check **Backend health**. A valid managed backend may show **Idle** until the first message starts it.
 7. Open **Chat** and send a message.
 
-Voice, avatar, and speech output can each be disabled independently.
+The managed runtime is installed separately from Project Akira, validated with `llama-server.exe --list-devices`, and selected automatically after a successful installation. See [Managed llama.cpp runtime](docs/llama_cpp_runtime.md), [Managed llama.cpp backend](docs/llama_cpp_backend.md), and [Hardware presets](docs/hardware_presets.md).
+
+### LM Studio
+
+1. Install and open LM Studio.
+2. Load a chat model and start LM Studio's local server.
+3. In Project Akira, open **Models** and select **LM Studio**.
+4. Use **Test & refresh**, select the model, choose its reasoning mode, and save the selection.
+
+### Other OpenAI-compatible servers
+
+1. Start the compatible server.
+2. Open **Models** and select **OpenAI-compatible**.
+3. Enter the server's `/v1` base URL, optional API key, and model ID.
+4. Test and save the selection.
+
+After configuring a model, open **Audio** to choose microphone and output devices. Personality, speech, avatar, memory, startup, and other behavior can be adjusted under **Settings**. Voice, avatar, Discord, VMC, and speech output can each be disabled independently.
+
+## Managed llama.cpp details
+
+Project Akira v0.5 pins a tested official llama.cpp release rather than silently following the latest upstream build. The runtime installer:
+
+1. Downloads resumable `.part` files.
+2. Verifies pinned SHA-256 hashes.
+3. Safely extracts only `llama-server.exe` and required runtime DLLs.
+4. Rejects unsafe ZIP paths and symbolic links.
+5. Validates the selected acceleration backend and detected devices.
+6. Activates the new runtime only after validation succeeds.
+7. Preserves a previous working runtime if repair or replacement fails.
+
+Runtime variants:
+
+- **NVIDIA CUDA 12** — installs the official CUDA llama.cpp build and its matching CUDA runtime DLL package
+- **Vulkan** — intended for AMD, Intel, and other Vulkan-capable GPUs
+- **CPU-only** — smallest fallback when GPU acceleration is unavailable
+
+A manually configured `llama-server.exe` remains supported and takes priority over the managed runtime. See [`docs/llama_cpp_runtime.md`](docs/llama_cpp_runtime.md) for storage paths, executable precedence, repair, removal, and troubleshooting.
 
 ## Local data and privacy
 
@@ -111,11 +163,11 @@ Packaged releases store user data at:
 %LOCALAPPDATA%\Project Akira\Data
 ```
 
-This directory contains settings, personalities, conversation history, memory, and other runtime data. Uninstalling Project Akira preserves it so data can survive upgrades and reinstalls.
+This directory contains settings, personalities, conversation history, memory, Discord configuration, downloaded models, managed runtimes, avatar files, and other runtime data. Uninstalling Project Akira preserves this directory so data can survive upgrades and reinstalls.
 
 Source checkouts use the repository's `data` directory unless another data directory is explicitly configured.
 
-Project Akira is designed for local use and does not require a cloud service by itself. When connected to a local backend, prompts and replies remain on the local machine. Configuring a remote OpenAI-compatible endpoint sends requests to that endpoint according to its own privacy policy.
+Project Akira is designed for local use and does not require a cloud service by itself. When using Managed llama.cpp or another local backend, prompts and replies remain on the local machine. A remote OpenAI-compatible endpoint receives requests according to that service's own privacy policy. Discord integration sends and receives data through Discord only when it is enabled.
 
 ## Run from source
 
@@ -221,36 +273,46 @@ dist\ProjectAkira
 Install Inno Setup 7, then run:
 
 ```powershell
-python build_installer.py --version 0.3.0
+python build_installer.py --version 0.5.0
 ```
 
 The installer is written to:
 
 ```text
-dist\installer\ProjectAkira-Setup-0.3.0.exe
+dist\installer\ProjectAkira-Setup-0.5.0.exe
 ```
 
 To package an already tested PyInstaller distribution:
 
 ```powershell
-python build_installer.py --version 0.3.0 --skip-app-build
+python build_installer.py --version 0.5.0 --skip-app-build
 ```
 
-See the files under [`docs`](docs/) for detailed configuration, audio, packaging, and installer notes.
+Detailed technical notes are available under [`docs`](docs/), including:
+
+- [Managed llama.cpp runtime](docs/llama_cpp_runtime.md)
+- [Managed llama.cpp backend](docs/llama_cpp_backend.md)
+- [Hardware presets](docs/hardware_presets.md)
+- [Backend health checks](docs/backend_health.md)
+- [Model and backend selector](docs/model_backend_selector.md)
+- [Avatar output backends](docs/avatar_output_backends.md)
+- [Audio devices](docs/audio_devices.md)
+- [Windows installer](docs/windows_installer.md)
 
 ## Project structure
 
 ```text
 Project-Akira/
-├── ai/                 LLM, personality, and memory components
-├── app/                Conversation service, API, desktop, tray, and history
+├── ai/                 LLM backends, personality, memory, and inference control
+├── app/                API, conversations, desktop, Discord, model, and runtime services
 ├── audio/              Recording, VAD, transcription, and TTS
-├── avatar/             VMC avatar controller and expression logic
+├── avatar/             Embedded/VMC avatar control and expression logic
 ├── config/             Persistent runtime settings
 ├── data/               Source-development runtime data
-├── docs/               Configuration and build documentation
+├── docs/               Configuration, feature, and build documentation
+├── installer/          Inno Setup configuration and installer assets
 ├── tests/              Unit and integration tests
-├── web/                Chat, settings, history, model, audio, and avatar UI
+├── web/                Chat, models, audio, avatar, Discord, history, and settings UI
 ├── assistant.py        Command-line launcher
 ├── desktop.py          Native desktop launcher
 ├── server.py           FastAPI development server
@@ -274,12 +336,13 @@ Development is tracked through [GitHub issues](https://github.com/ProblemsArisin
 
 ## Current limitations
 
-- The Windows installer is currently unsigned.
-- A language model is not bundled with v0.3.
-- The built-in avatar renderer is not yet implemented.
-- External avatar rendering currently requires VMC-compatible software.
 - Windows is the primary supported desktop platform.
-- Model, Whisper, and voice performance depends heavily on local hardware.
+- The Windows installer is currently unsigned.
+- Language models are not bundled and may require substantial storage, RAM, or VRAM.
+- Managed runtime and model performance depends heavily on local hardware and drivers.
+- Built-in RVC voice conversion is not yet implemented.
+- Generic OpenAI-compatible servers do not expose all LM Studio or managed llama.cpp model-management and reasoning controls.
+- The transparent avatar overlay is display-only and intentionally uses a fixed-size interaction model.
 
 ## Contributing
 
@@ -293,10 +356,10 @@ Before submitting a change:
 4. Keep commits scoped to one issue or feature.
 5. Reference the related issue in the pull request.
 
-Bug reports should include the Project Akira version, Windows version, backend, relevant settings, and the complete error message or traceback.
+Bug reports should include the Project Akira version, Windows version, selected backend, relevant settings, and the complete error message or traceback.
 
 ## License
 
-Project Akira is licensed under the [Apache License 2.0](LICENSE).
+Project Akira is licensed under the [Apache License 2.0](LICENSE). See [`NOTICE`](NOTICE) for project attribution information.
 
-See [`NOTICE`](NOTICE) for project attribution information.
+The optional managed llama.cpp runtime is downloaded separately under llama.cpp's MIT license, and its license notice is installed beside the runtime executable.
