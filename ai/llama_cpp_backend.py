@@ -23,6 +23,10 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+from app.llama_cpp_runtime import (
+    find_managed_llama_cpp_executable,
+    is_managed_llama_cpp_path,
+)
 from app.paths import USER_DATA_ROOT, resource_path
 from config.settings import AppSettings, get_settings
 
@@ -211,11 +215,19 @@ def _resolve_executable(configured: object) -> Path:
     raw = _normalized_path_text(configured)
     if raw:
         candidate = Path(raw).expanduser().resolve()
-        if not candidate.is_file():
+        if candidate.is_file():
+            return candidate
+        # A removed or replaced Project Akira-managed runtime may leave a
+        # stale generated path in older settings. Fall through to the active
+        # managed-runtime record, but keep surfacing missing manual paths.
+        if not is_managed_llama_cpp_path(candidate):
             raise LlamaCppConfigurationError(
                 f"llama-server executable was not found: {candidate}"
             )
-        return candidate
+
+    managed = find_managed_llama_cpp_executable()
+    if managed is not None:
+        return managed
 
     names = ("llama-server.exe", "llama-server")
     bundled = [resource_path("llama.cpp", name) for name in names]
@@ -229,9 +241,9 @@ def _resolve_executable(configured: object) -> Path:
             return Path(discovered).resolve()
 
     raise LlamaCppConfigurationError(
-        "No llama-server executable is configured. Set "
-        "llm.llama_cpp_executable to llama-server.exe or install llama.cpp "
-        "so llama-server is available on PATH."
+        "No llama-server executable is configured. Install the recommended "
+        "runtime from the Models page, choose an existing llama-server.exe, "
+        "or make llama-server available on PATH."
     )
 
 
