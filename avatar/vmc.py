@@ -1100,7 +1100,7 @@ class VMCAvatarController:
         self._set_mouth_blends_no_apply({name: 0.0 for name in VOWEL_BLENDS})
         self._apply_all_blends()
 
-    def start_talking(self, text: str = "") -> None:
+    def _start_talking_thread(self, target, args: tuple, *, text: str) -> None:
         if not self._enabled:
             return
         with self._state_lock:
@@ -1110,8 +1110,28 @@ class VMCAvatarController:
             self._mouth_stop_event.clear()
             if ENABLE_EXPRESSIONS or ENABLE_BODY_EXPRESSIONS:
                 self.set_expression_from_text(text, apply=True)
-            self._mouth_thread = threading.Thread(target=self._mouth_loop, args=(text,), daemon=True)
+            self._mouth_thread = threading.Thread(target=target, args=args, daemon=True)
             self._mouth_thread.start()
+
+    def start_talking(self, text: str = "") -> None:
+        self._start_talking_thread(self._mouth_loop, (text,), text=text)
+
+    def start_talking_audio(
+        self,
+        values: Tuple[float, ...] | List[float],
+        fps: int,
+        *,
+        text: str = "",
+    ) -> None:
+        normalized = tuple(_clamp01(value) for value in values)
+        if not normalized or int(fps) <= 0:
+            self.start_talking(text)
+            return
+        self._start_talking_thread(
+            self._audio_mouth_loop,
+            (normalized, int(fps)),
+            text=text,
+        )
 
     def stop_talking(self) -> None:
         if not self._enabled:
@@ -1139,6 +1159,24 @@ class VMCAvatarController:
             name: current.get(name, 0.0) + (target.get(name, 0.0) - current.get(name, 0.0)) * speed
             for name in VOWEL_BLENDS
         }
+
+    def _audio_mouth_loop(self, values: Tuple[float, ...], fps: int) -> None:
+        frame_time = 1.0 / max(1, int(fps))
+        current = 0.0
+        for value in values:
+            if self._mouth_stop_event.is_set():
+                break
+            speed = ATTACK_SPEED if value >= current else RELEASE_SPEED
+            current += (value - current) * speed
+            self.set_mouth_blends({
+                "A": current * MOUTH_SCALE,
+                "I": current * 0.05,
+                "U": 0.0,
+                "E": current * 0.03,
+                "O": current * 0.08,
+            })
+            time.sleep(frame_time)
+        self.close_mouth()
 
     def _mouth_loop(self, text: str) -> None:
         current = {name: 0.0 for name in VOWEL_BLENDS}
@@ -1380,6 +1418,15 @@ atexit.register(_controller.shutdown)
 
 def start_talking(text: str = "") -> None:
     _controller.start_talking(text)
+
+
+def start_talking_audio(
+    values: Tuple[float, ...] | List[float],
+    fps: int,
+    *,
+    text: str = "",
+) -> None:
+    _controller.start_talking_audio(values, fps, text=text)
 
 
 def stop_talking() -> None:

@@ -218,7 +218,7 @@ class ConversationService:
         )
         cls._add_default_history(kwargs)
 
-        return cls(
+        service = cls(
             recorder=microphone.record,
             transcriber=transcribe,
             responder=responder,
@@ -229,6 +229,8 @@ class ConversationService:
             reset_conversation_context=reset_short_term_context,
             **kwargs,
         )
+        service._bind_speaker_events(speaker)
+        return service
 
     @classmethod
     def from_text_components(
@@ -283,7 +285,7 @@ class ConversationService:
 
         cls._add_default_history(kwargs)
 
-        return cls(
+        service = cls(
             recorder=lambda: None,
             transcriber=lambda audio_file: "",
             responder=responder,
@@ -292,6 +294,13 @@ class ConversationService:
             reset_conversation_context=reset_short_term_context,
             **kwargs,
         )
+        service._bind_speaker_events(speaker)
+        return service
+
+    def _bind_speaker_events(self, speaker: Speaker) -> None:
+        setter = getattr(speaker, "set_event_callback", None)
+        if callable(setter):
+            setter(self._emit_event)
 
     def add_event_listener(self, callback: ConversationEventCallback) -> None:
         """Subscribe to structured service events.

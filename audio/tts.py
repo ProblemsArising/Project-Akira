@@ -8,20 +8,25 @@ from math import gcd
 from pathlib import Path
 import tempfile
 import time
-from typing import Protocol
+from typing import Callable, Mapping, Protocol
 
 import numpy as np
 import pyttsx3
 import scipy.io.wavfile as wav
 import sounddevice as sd
 
+from audio.lipsync import build_audio_lipsync_profile
 from avatar.vmc import start_talking, stop_talking
+from avatar.vmc import start_talking_audio
 
 MOUTH_END_DELAY_SECONDS = 0.05
 
 
 class TTSPlaybackError(RuntimeError):
     """Raised when synthesized speech cannot be routed to the selected device."""
+
+
+TTSAnimationEventCallback = Callable[[str, Mapping[str, object]], None]
 
 
 class AudioConverter(Protocol):
@@ -256,6 +261,7 @@ class TextToSpeech:
         volume: float = 1.0,
         mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
         audio_converter: AudioConverter | None = None,
+        on_event: TTSAnimationEventCallback | None = None,
     ) -> None:
         self.output_device = output_device
         self.voice_index = voice_index
@@ -263,9 +269,25 @@ class TextToSpeech:
         self.volume = volume
         self.mouth_end_delay_seconds = max(0.0, float(mouth_end_delay_seconds))
         self.audio_converter = audio_converter
+        self._on_event = on_event
 
     def __call__(self, text: str) -> None:
         self.speak(text)
+
+    def set_event_callback(self, callback: TTSAnimationEventCallback | None) -> None:
+        """Attach the owning conversation service after construction."""
+
+        self._on_event = callback
+
+    def _emit_event(self, event_type: str, data: Mapping[str, object] | None = None) -> None:
+        callback = self._on_event
+        if callback is None:
+            return
+        try:
+            callback(event_type, dict(data or {}))
+        except Exception:
+            # Avatar/WebSocket animation is optional and must not break speech.
+            pass
 
     def synthesize(self, text: str) -> SynthesizedAudio | None:
         """Render text into an in-memory normalized audio buffer.
@@ -355,6 +377,7 @@ class TextToSpeech:
             rate=self.rate,
             volume=self.volume,
         )
+        self._emit_event("avatar.lipsync.text", {"text": text, "source": "tts_text"})
         try:
             start_talking(text)
             engine.say(text)
@@ -362,18 +385,25 @@ class TextToSpeech:
             time.sleep(self.mouth_end_delay_seconds)
         finally:
             stop_talking()
+            self._emit_event("avatar.lipsync.stopped", {})
 
     def _speak_to_audio_buffer(self, text: str) -> None:
         final_audio = self.render(text)
         if final_audio is None:
             return
 
+        profile = build_audio_lipsync_profile(
+            final_audio.samples,
+            final_audio.sample_rate,
+        )
+        self._emit_event("avatar.lipsync.started", profile.to_event_data())
         try:
-            start_talking(text)
+            start_talking_audio(profile.values, profile.fps, text=text)
             self.play_audio(final_audio)
             time.sleep(self.mouth_end_delay_seconds)
         finally:
             stop_talking()
+            self._emit_event("avatar.lipsync.stopped", {})
 
 
 def create_speaker(
@@ -384,6 +414,7 @@ def create_speaker(
     volume: float = 1.0,
     mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
     audio_converter: AudioConverter | None = None,
+    on_event: TTSAnimationEventCallback | None = None,
 ) -> TextToSpeech:
     """Create a configured speaker callable for ``ConversationService``."""
 
@@ -394,6 +425,7 @@ def create_speaker(
         volume=volume,
         mouth_end_delay_seconds=mouth_end_delay_seconds,
         audio_converter=audio_converter,
+        on_event=on_event,
     )
 
 

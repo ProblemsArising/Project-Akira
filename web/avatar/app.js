@@ -1,6 +1,7 @@
 import { EmbeddedVRMRenderer } from "/static/avatar/renderer.js";
 import { TextExpressionPlayer } from "/static/avatar/expressions.js";
 import { TextVisemePlayer } from "/static/avatar/visemes.js";
+import { AudioVisemePlayer } from "/static/avatar/audio_visemes.js";
 import { TextBodyPosePlayer } from "/static/avatar/poses.js";
 import { avatarOutputLabel, resolveAvatarOutputs } from "/static/avatar/output.js";
 
@@ -50,11 +51,13 @@ const COPY = {
 let embeddedRenderer = null;
 let expressionPlayer = null;
 let visemePlayer = null;
+let audioVisemePlayer = null;
 let bodyPosePlayer = null;
 try {
   embeddedRenderer = new EmbeddedVRMRenderer(elements.rendererHost);
   expressionPlayer = new TextExpressionPlayer(embeddedRenderer);
   visemePlayer = new TextVisemePlayer(embeddedRenderer);
+  audioVisemePlayer = new AudioVisemePlayer(embeddedRenderer);
   bodyPosePlayer = new TextBodyPosePlayer(embeddedRenderer);
 } catch (error) {
   console.error("Embedded VRM renderer could not start", error);
@@ -117,6 +120,7 @@ function stopEmbeddedAnimation(reset = true) {
   if (bodyPosePlayer) bodyPosePlayer.cancel(reset);
   if (expressionPlayer) expressionPlayer.cancel(reset);
   if (visemePlayer) visemePlayer.stop();
+  if (audioVisemePlayer) audioVisemePlayer.stop();
 }
 
 function refreshOutputDescription() {
@@ -231,6 +235,7 @@ function clearConfiguredModel() {
   if (bodyPosePlayer) bodyPosePlayer.cancel(true);
   if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
+  if (audioVisemePlayer) audioVisemePlayer.stop();
   if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
   state.model = null;
   state.modelLoading = false;
@@ -359,16 +364,32 @@ function handleEvent(event) {
           Boolean(data.will_speak),
         );
       }
-      if (visemePlayer) {
-        if (data.will_speak) visemePlayer.start(data.reply || "");
-        else visemePlayer.stop();
-      }
+      if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.stop();
       break;
+    case "avatar.lipsync.text":
+      if (!state.output.embedded) break;
+      if (audioVisemePlayer) audioVisemePlayer.stop();
+      if (visemePlayer) visemePlayer.start(data.text || "");
+      break;
+
+    case "avatar.lipsync.started":
+      if (!state.output.embedded) break;
+      if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.start(data);
+      break;
+
+    case "avatar.lipsync.stopped":
+      if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.stop();
+      break;
+
     case "chat.completed":
       if (embeddedRenderer) embeddedRenderer.setSpeaking(false);
       if (bodyPosePlayer) bodyPosePlayer.complete();
       if (expressionPlayer) expressionPlayer.complete();
       if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.stop();
       restoreIdle();
       break;
     case "voice.recording.cancelled":
@@ -380,6 +401,7 @@ function handleEvent(event) {
       if (bodyPosePlayer) bodyPosePlayer.cancel();
       if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.stop();
       setStage("error", data.error || "Akira could not complete that reply.");
       break;
     case "personality.changed":
@@ -396,6 +418,7 @@ function handleEvent(event) {
       if (bodyPosePlayer) bodyPosePlayer.cancel();
       if (expressionPlayer) expressionPlayer.cancel();
       if (visemePlayer) visemePlayer.stop();
+      if (audioVisemePlayer) audioVisemePlayer.stop();
       setConnection(false, "Server stopped");
       setStage("offline");
       break;
@@ -435,6 +458,7 @@ function connect() {
     if (bodyPosePlayer) bodyPosePlayer.cancel();
     if (expressionPlayer) expressionPlayer.cancel();
     if (visemePlayer) visemePlayer.stop();
+    if (audioVisemePlayer) audioVisemePlayer.stop();
     if (state.socket !== socket) return;
     setConnection(false, "Reconnecting");
     setStage("offline");
@@ -457,6 +481,7 @@ window.addEventListener("beforeunload", () => {
   if (bodyPosePlayer) bodyPosePlayer.cancel(true);
   if (expressionPlayer) expressionPlayer.cancel(true);
   if (visemePlayer) visemePlayer.stop();
+  if (audioVisemePlayer) audioVisemePlayer.stop();
   if (embeddedRenderer) embeddedRenderer.dispose();
 });
 
