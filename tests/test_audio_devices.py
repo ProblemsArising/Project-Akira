@@ -162,11 +162,16 @@ class TTSOutputDeviceTests(unittest.TestCase):
 
         self._sd_patcher = mock.patch.object(tts_module, "sd", fake_sd)
         self._start_patcher = mock.patch.object(tts_module, "start_talking", mock.Mock())
+        self._start_audio_patcher = mock.patch.object(
+            tts_module, "start_talking_audio", mock.Mock()
+        )
         self._stop_patcher = mock.patch.object(tts_module, "stop_talking", mock.Mock())
         self._sd_patcher.start()
         self._start_patcher.start()
+        self._start_audio_patcher.start()
         self._stop_patcher.start()
         self.addCleanup(self._stop_patcher.stop)
+        self.addCleanup(self._start_audio_patcher.stop)
         self.addCleanup(self._start_patcher.stop)
         self.addCleanup(self._sd_patcher.stop)
         return tts_module
@@ -175,11 +180,24 @@ class TTSOutputDeviceTests(unittest.TestCase):
         import numpy as np
 
         tts_module = self._load_tts_module()
+        profile = mock.Mock()
+        profile.values = (0.0, 0.7, 0.0)
+        profile.fps = 30
+        profile.to_event_data.return_value = {
+            "fps": 30,
+            "duration_seconds": 0.01,
+            "values": [0.0, 0.7, 0.0],
+            "source": "final_audio",
+        }
         with tempfile.TemporaryDirectory() as directory:
             wav_path = Path(directory) / "speech.wav"
             wav_path.write_bytes(b"fake")
 
             with mock.patch.object(
+                tts_module,
+                "build_audio_lipsync_profile",
+                return_value=profile,
+            ), mock.patch.object(
                 tts_module,
                 "_synthesize_to_wav",
                 return_value=wav_path,
@@ -200,7 +218,9 @@ class TTSOutputDeviceTests(unittest.TestCase):
         tts_module.sd.play.assert_called_once()
         self.assertEqual(tts_module.sd.play.call_args.kwargs["device"], 9)
         self.assertTrue(tts_module.sd.play.call_args.kwargs["blocking"])
-        tts_module.start_talking.assert_called_once_with("Hello")
+        tts_module.start_talking_audio.assert_called_once_with(
+            profile.values, profile.fps, text="Hello"
+        )
         tts_module.stop_talking.assert_called_once_with()
 
     def test_default_output_preserves_direct_pyttsx3_path(self) -> None:

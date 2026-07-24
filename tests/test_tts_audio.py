@@ -166,6 +166,15 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
             sample_rate=24_000,
         )
         playback = np.array([0.0, 0.5, -0.5], dtype=np.float32)
+        profile = Mock()
+        profile.values = (0.0, 0.7, 0.0)
+        profile.fps = 30
+        profile.to_event_data.return_value = {
+            "fps": 30,
+            "duration_seconds": 0.01,
+            "values": [0.0, 0.7, 0.0],
+            "source": "final_audio",
+        }
 
         with (
             patch.object(speaker, "synthesize", return_value=synthesized) as synthesize,
@@ -173,7 +182,8 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
                 "audio.tts._prepare_output_audio",
                 return_value=(playback, 48_000),
             ) as prepare,
-            patch("audio.tts.start_talking") as start_talking,
+            patch("audio.tts.build_audio_lipsync_profile", return_value=profile),
+            patch("audio.tts.start_talking_audio") as start_talking_audio,
             patch("audio.tts.stop_talking") as stop_talking,
             patch("audio.tts.sd.play", create=True) as play,
             patch("audio.tts.time.sleep"),
@@ -182,7 +192,9 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
 
         synthesize.assert_called_once_with("Routed speech")
         prepare.assert_called_once_with(synthesized.samples, 24_000, 7)
-        start_talking.assert_called_once_with("Routed speech")
+        start_talking_audio.assert_called_once_with(
+            profile.values, profile.fps, text="Routed speech"
+        )
         play.assert_called_once_with(
             playback,
             samplerate=48_000,
@@ -200,6 +212,15 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
             samples=np.array([0.0, 0.8, -0.8], dtype=np.float32),
             sample_rate=40_000,
         )
+        profile = Mock()
+        profile.values = (0.0, 0.7, 0.0)
+        profile.fps = 30
+        profile.to_event_data.return_value = {
+            "fps": 30,
+            "duration_seconds": 0.01,
+            "values": [0.0, 0.7, 0.0],
+            "source": "final_audio",
+        }
         converter = Mock()
         converter.convert.return_value = converted
         speaker = TextToSpeech(
@@ -210,7 +231,8 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
         with (
             patch.object(speaker, "synthesize", return_value=source) as synthesize,
             patch.object(speaker, "play_audio") as play_audio,
-            patch("audio.tts.start_talking") as start_talking,
+            patch("audio.tts.build_audio_lipsync_profile", return_value=profile),
+            patch("audio.tts.start_talking_audio") as start_talking_audio,
             patch("audio.tts.stop_talking") as stop_talking,
             patch("audio.tts.pyttsx3.init") as initialize_engine,
             patch("audio.tts.time.sleep"),
@@ -221,7 +243,9 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
         converter.convert.assert_called_once_with(source)
         play_audio.assert_called_once_with(converted)
         initialize_engine.assert_not_called()
-        start_talking.assert_called_once_with("Converted speech")
+        start_talking_audio.assert_called_once_with(
+            profile.values, profile.fps, text="Converted speech"
+        )
         stop_talking.assert_called_once_with()
 
     def test_render_rejects_invalid_converter_results(self) -> None:

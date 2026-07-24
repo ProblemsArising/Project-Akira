@@ -35,7 +35,11 @@ class AvatarVisemeTests(unittest.TestCase):
         source = (AVATAR_ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('case "chat.reply_ready"', source)
-        self.assertIn('visemePlayer.start(data.reply || "")', source)
+        self.assertIn('case "avatar.lipsync.started"', source)
+        self.assertIn("audioVisemePlayer.start(data)", source)
+        self.assertIn('case "avatar.lipsync.text"', source)
+        self.assertIn('visemePlayer.start(data.text || "")', source)
+        self.assertIn('case "avatar.lipsync.stopped"', source)
         self.assertIn('case "chat.completed"', source)
         self.assertIn('case "chat.failed"', source)
         self.assertIn("visemePlayer.stop()", source)
