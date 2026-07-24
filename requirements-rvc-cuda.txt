@@ -1,0 +1,6 @@
+# Optional NVIDIA CUDA runtime for internal RVC on Windows/Linux.
+# Install requirements-rvc.txt first, then this file to replace CPU-only
+# PyTorch wheels with the matching CUDA 12.8 builds.
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128

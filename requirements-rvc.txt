@@ -1,0 +1,8 @@
+# Optional in-process voice-conversion runtime used by audio/rvc.py.
+# Kept out of requirements.txt because this pulls in PyTorch, fairseq, FAISS,
+# pitch extraction libraries, and platform-specific compiled dependencies.
+# Installation currently requires pip 24.0 because fairseq 0.12.2 depends on
+# legacy OmegaConf metadata rejected by pip 24.1 and newer. See the RVC docs.
+# FAISS 1.7.3 is built against the NumPy 1.x ABI and cannot import with NumPy 2.
+numpy==1.26.4
+infer-rvc-python==1.2.0
