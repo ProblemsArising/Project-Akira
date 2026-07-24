@@ -1,7 +1,9 @@
-"""Text-to-speech output with optional explicit speaker device routing."""
+"""Text-to-speech synthesis and optional explicit speaker device routing."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from io import BytesIO
 from math import gcd
 from pathlib import Path
 import tempfile
@@ -38,6 +40,69 @@ def _to_float32(audio: np.ndarray) -> np.ndarray:
     info = np.iinfo(audio.dtype)
     scale = float(max(abs(info.min), info.max))
     return audio.astype(np.float32) / scale
+
+
+def _to_pcm16(audio: np.ndarray) -> np.ndarray:
+    """Convert normalized audio to broadly compatible signed 16-bit PCM."""
+
+    normalized = _to_float32(audio)
+    return np.rint(normalized * np.iinfo(np.int16).max).astype(np.int16)
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesizedAudio:
+    """In-memory TTS audio ready for voice conversion or direct playback.
+
+    Samples are always contiguous, normalized ``float32`` data in the range
+    ``[-1.0, 1.0]``. Mono audio uses shape ``(frames,)`` and multichannel audio
+    uses ``(frames, channels)``.
+    """
+
+    samples: np.ndarray
+    sample_rate: int
+
+    def __post_init__(self) -> None:
+        sample_rate = int(self.sample_rate)
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be greater than zero")
+
+        samples = np.ascontiguousarray(_to_float32(self.samples))
+        if samples.ndim not in (1, 2):
+            raise ValueError("samples must be mono or multichannel audio")
+        if samples.shape[0] == 0:
+            raise ValueError("samples cannot be empty")
+        if samples.ndim == 2 and samples.shape[1] == 0:
+            raise ValueError("multichannel audio must contain at least one channel")
+
+        object.__setattr__(self, "samples", samples)
+        object.__setattr__(self, "sample_rate", sample_rate)
+
+    @property
+    def frames(self) -> int:
+        return int(self.samples.shape[0])
+
+    @property
+    def channels(self) -> int:
+        return 1 if self.samples.ndim == 1 else int(self.samples.shape[1])
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.frames / self.sample_rate
+
+    def to_wav_bytes(self) -> bytes:
+        """Encode this buffer as a signed 16-bit PCM WAV byte string."""
+
+        buffer = BytesIO()
+        wav.write(buffer, self.sample_rate, _to_pcm16(self.samples))
+        return buffer.getvalue()
+
+    def write_wav(self, destination: str | Path) -> Path:
+        """Write this buffer as a signed 16-bit PCM WAV file."""
+
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        wav.write(str(path), self.sample_rate, _to_pcm16(self.samples))
+        return path
 
 
 def _prepare_output_audio(
@@ -107,10 +172,16 @@ def _synthesize_to_wav(
     voice_index: int,
     rate: int,
     volume: float,
+    destination: str | Path | None = None,
 ) -> Path:
-    temporary = tempfile.NamedTemporaryFile(prefix="akira-tts-", suffix=".wav", delete=False)
-    path = Path(temporary.name)
-    temporary.close()
+    if destination is None:
+        temporary = tempfile.NamedTemporaryFile(prefix="akira-tts-", suffix=".wav", delete=False)
+        path = Path(temporary.name)
+        temporary.close()
+    else:
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
 
     engine = pyttsx3.init()
     _configure_engine(engine, voice_index=voice_index, rate=rate, volume=volume)
@@ -128,7 +199,7 @@ def _synthesize_to_wav(
 
 
 class TextToSpeech:
-    """Callable TTS backend with optional direct output-device selection."""
+    """Callable TTS backend with reusable synthesis and optional playback."""
 
     def __init__(
         self,
@@ -147,6 +218,52 @@ class TextToSpeech:
 
     def __call__(self, text: str) -> None:
         self.speak(text)
+
+    def synthesize(self, text: str) -> SynthesizedAudio | None:
+        """Render text into an in-memory normalized audio buffer.
+
+        The temporary pyttsx3 WAV is deleted before this method returns. Blank
+        text produces ``None`` without initializing the TTS engine.
+        """
+
+        normalized = str(text).strip()
+        if not normalized:
+            return None
+
+        wav_path = _synthesize_to_wav(
+            normalized,
+            voice_index=self.voice_index,
+            rate=self.rate,
+            volume=self.volume,
+        )
+        try:
+            sample_rate, samples = wav.read(str(wav_path))
+            return SynthesizedAudio(samples=samples, sample_rate=int(sample_rate))
+        finally:
+            wav_path.unlink(missing_ok=True)
+
+    def synthesize_to_wav(
+        self,
+        text: str,
+        destination: str | Path,
+    ) -> Path | None:
+        """Render text directly to a caller-owned WAV file.
+
+        Existing files are replaced. Blank text produces ``None`` and leaves
+        the destination untouched.
+        """
+
+        normalized = str(text).strip()
+        if not normalized:
+            return None
+
+        return _synthesize_to_wav(
+            normalized,
+            voice_index=self.voice_index,
+            rate=self.rate,
+            volume=self.volume,
+            destination=destination,
+        )
 
     def speak(self, text: str) -> None:
         normalized = str(text).strip()
@@ -177,32 +294,26 @@ class TextToSpeech:
             stop_talking()
 
     def _speak_to_selected_device(self, text: str) -> None:
-        wav_path = _synthesize_to_wav(
-            text,
-            voice_index=self.voice_index,
-            rate=self.rate,
-            volume=self.volume,
+        synthesized = self.synthesize(text)
+        if synthesized is None:
+            return
+
+        playback, playback_rate = _prepare_output_audio(
+            synthesized.samples,
+            synthesized.sample_rate,
+            self.output_device,
         )
         try:
-            sample_rate, audio = wav.read(str(wav_path))
-            playback, playback_rate = _prepare_output_audio(
-                audio,
-                int(sample_rate),
-                self.output_device,
+            start_talking(text)
+            sd.play(
+                playback,
+                samplerate=playback_rate,
+                device=self.output_device,
+                blocking=True,
             )
-            try:
-                start_talking(text)
-                sd.play(
-                    playback,
-                    samplerate=playback_rate,
-                    device=self.output_device,
-                    blocking=True,
-                )
-                time.sleep(self.mouth_end_delay_seconds)
-            finally:
-                stop_talking()
+            time.sleep(self.mouth_end_delay_seconds)
         finally:
-            wav_path.unlink(missing_ok=True)
+            stop_talking()
 
 
 def create_speaker(
