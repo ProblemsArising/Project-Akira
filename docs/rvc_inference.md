@@ -2,8 +2,8 @@
 
 Issue #38 adds an application-owned RVC boundary that accepts the
 `SynthesizedAudio` buffer produced by `audio.tts` and returns another
-`SynthesizedAudio` buffer. It does not route or play the converted audio yet;
-that connection belongs to issue #39.
+`SynthesizedAudio` buffer. Issue #39 connects that final buffer to direct
+blocking playback through Akira's selected output device or the system default.
 
 ## Optional runtime
 
@@ -48,24 +48,35 @@ Microsoft C++ build tools on Windows. Keeping it optional means normal Akira
 installs and unit tests do not import PyTorch or load voice models unless voice
 conversion is enabled.
 
-## Converting a TTS buffer
+## Converting and playing TTS directly
+
+`TextToSpeech` accepts any object with a `convert(SynthesizedAudio)` method.
+Passing an `RVCConverter` makes `speak()` synthesize the source voice, convert
+it in memory, and play the converted buffer directly without VB-CABLE or an
+external voice changer:
 
 ```python
 from audio.rvc import RVCConverter, RVCModelConfig
 from audio.tts import TextToSpeech
 
-speaker = TextToSpeech()
-source = speaker.synthesize("Testing Akira's internal voice conversion.")
+config = RVCModelConfig(
+    model_path="data/voice_models/akira/akira.pth",
+    index_path="data/voice_models/akira/akira.index",
+)
 
-if source is not None:
-    config = RVCModelConfig(
-        model_path="data/voice_models/akira/akira.pth",
-        index_path="data/voice_models/akira/akira.index",
+with RVCConverter(config) as converter:
+    speaker = TextToSpeech(
+        output_device=None,  # system default; an explicit device index also works
+        audio_converter=converter,
     )
-    with RVCConverter(config) as converter:
-        converted = converter.convert(source)
-        converted.write_wav("data/voice_models/converted-test.wav")
+    speaker.speak("Testing Akira's internal voice conversion.")
 ```
+
+For diagnostics or future audio consumers, `speaker.render(text)` returns the
+final converted `SynthesizedAudio` without playing it, and
+`speaker.play_audio(buffer)` plays an existing synthesized or converted buffer.
+Playback adapts channel count and sample rate to the chosen endpoint and blocks
+until the utterance finishes.
 
 The `.pth` model is required. The `.index` file is optional. A converter keeps
 one configured model preloaded across calls; call `close()` when switching

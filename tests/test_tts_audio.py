@@ -4,12 +4,12 @@ from io import BytesIO
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import scipy.io.wavfile as wav
 
-from audio.tts import SynthesizedAudio, TextToSpeech
+from audio.tts import DirectAudioPlayer, SynthesizedAudio, TTSPlaybackError, TextToSpeech
 
 
 class SynthesizedAudioTests(unittest.TestCase):
@@ -52,6 +52,55 @@ class SynthesizedAudioTests(unittest.TestCase):
 
         self.assertEqual(file_rate, 22_050)
         np.testing.assert_array_equal(file_audio, encoded)
+
+
+class DirectAudioPlayerTests(unittest.TestCase):
+    def test_system_default_playback_uses_prepared_audio_buffer(self) -> None:
+        audio = SynthesizedAudio(
+            samples=np.array([0.0, 0.25, -0.25], dtype=np.float32),
+            sample_rate=40_000,
+        )
+        playback = np.array([0.0, 0.5, -0.5], dtype=np.float32)
+
+        with (
+            patch(
+                "audio.tts._prepare_output_audio",
+                return_value=(playback, 48_000),
+            ) as prepare,
+            patch("audio.tts.sd.play", create=True) as play,
+        ):
+            DirectAudioPlayer().play(audio)
+
+        prepare.assert_called_once_with(audio.samples, 40_000, None)
+        play.assert_called_once_with(
+            playback,
+            samplerate=48_000,
+            device=None,
+            blocking=True,
+        )
+
+    def test_playback_backend_failures_are_wrapped(self) -> None:
+        audio = SynthesizedAudio(
+            samples=np.array([0.0, 0.1], dtype=np.float32),
+            sample_rate=24_000,
+        )
+
+        with (
+            patch(
+                "audio.tts._prepare_output_audio",
+                return_value=(audio.samples, audio.sample_rate),
+            ),
+            patch(
+                "audio.tts.sd.play",
+                side_effect=RuntimeError("device vanished"),
+                create=True,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                TTSPlaybackError,
+                "system default output device.*device vanished",
+            ):
+                DirectAudioPlayer().play(audio)
 
 
 class TextToSpeechSynthesisTests(unittest.TestCase):
@@ -141,6 +190,55 @@ class TextToSpeechSynthesisTests(unittest.TestCase):
             blocking=True,
         )
         stop_talking.assert_called_once_with()
+
+    def test_converter_pipeline_plays_final_converted_buffer(self) -> None:
+        source = SynthesizedAudio(
+            samples=np.array([0.0, 0.1, -0.1], dtype=np.float32),
+            sample_rate=24_000,
+        )
+        converted = SynthesizedAudio(
+            samples=np.array([0.0, 0.8, -0.8], dtype=np.float32),
+            sample_rate=40_000,
+        )
+        converter = Mock()
+        converter.convert.return_value = converted
+        speaker = TextToSpeech(
+            audio_converter=converter,
+            mouth_end_delay_seconds=0.0,
+        )
+
+        with (
+            patch.object(speaker, "synthesize", return_value=source) as synthesize,
+            patch.object(speaker, "play_audio") as play_audio,
+            patch("audio.tts.start_talking") as start_talking,
+            patch("audio.tts.stop_talking") as stop_talking,
+            patch("audio.tts.pyttsx3.init") as initialize_engine,
+            patch("audio.tts.time.sleep"),
+        ):
+            speaker.speak("  Converted speech  ")
+
+        synthesize.assert_called_once_with("Converted speech")
+        converter.convert.assert_called_once_with(source)
+        play_audio.assert_called_once_with(converted)
+        initialize_engine.assert_not_called()
+        start_talking.assert_called_once_with("Converted speech")
+        stop_talking.assert_called_once_with()
+
+    def test_render_rejects_invalid_converter_results(self) -> None:
+        source = SynthesizedAudio(
+            samples=np.array([0.0, 0.1], dtype=np.float32),
+            sample_rate=24_000,
+        )
+        converter = Mock()
+        converter.convert.return_value = np.zeros(2, dtype=np.float32)
+        speaker = TextToSpeech(audio_converter=converter)
+
+        with patch.object(speaker, "synthesize", return_value=source):
+            with self.assertRaisesRegex(
+                TTSPlaybackError,
+                "expected SynthesizedAudio",
+            ):
+                speaker.render("Hello")
 
 
 if __name__ == "__main__":

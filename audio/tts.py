@@ -8,6 +8,7 @@ from math import gcd
 from pathlib import Path
 import tempfile
 import time
+from typing import Protocol
 
 import numpy as np
 import pyttsx3
@@ -21,6 +22,13 @@ MOUTH_END_DELAY_SECONDS = 0.05
 
 class TTSPlaybackError(RuntimeError):
     """Raised when synthesized speech cannot be routed to the selected device."""
+
+
+class AudioConverter(Protocol):
+    """Structural interface for an in-memory voice-conversion stage."""
+
+    def convert(self, audio: "SynthesizedAudio") -> "SynthesizedAudio":
+        """Return the final audio buffer that should be played."""
 
 
 def _configure_engine(engine, *, voice_index: int, rate: int, volume: float) -> None:
@@ -108,7 +116,7 @@ class SynthesizedAudio:
 def _prepare_output_audio(
     audio: np.ndarray,
     sample_rate: int,
-    output_device: int | str,
+    output_device: int | str | None,
 ) -> tuple[np.ndarray, int]:
     """Adapt channel count/sample rate to the selected output device."""
 
@@ -166,6 +174,44 @@ def _prepare_output_audio(
     return data, target_rate
 
 
+class DirectAudioPlayer:
+    """Play a normalized Akira audio buffer through sounddevice.
+
+    ``output_device=None`` uses the operating system's default output device.
+    Playback is blocking so callers can keep speech state and avatar animation
+    synchronized with the complete utterance.
+    """
+
+    def __init__(self, output_device: int | str | None = None) -> None:
+        self.output_device = output_device
+
+    def play(self, audio: SynthesizedAudio) -> None:
+        if not isinstance(audio, SynthesizedAudio):
+            raise TypeError("audio must be a SynthesizedAudio instance")
+
+        playback, playback_rate = _prepare_output_audio(
+            audio.samples,
+            audio.sample_rate,
+            self.output_device,
+        )
+        try:
+            sd.play(
+                playback,
+                samplerate=playback_rate,
+                device=self.output_device,
+                blocking=True,
+            )
+        except Exception as error:
+            target = (
+                "the system default output device"
+                if self.output_device is None
+                else f"output device {self.output_device!r}"
+            )
+            raise TTSPlaybackError(
+                f"Could not play synthesized speech through {target}: {error}"
+            ) from error
+
+
 def _synthesize_to_wav(
     text: str,
     *,
@@ -209,12 +255,14 @@ class TextToSpeech:
         rate: int = 175,
         volume: float = 1.0,
         mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
+        audio_converter: AudioConverter | None = None,
     ) -> None:
         self.output_device = output_device
         self.voice_index = voice_index
         self.rate = rate
         self.volume = volume
         self.mouth_end_delay_seconds = max(0.0, float(mouth_end_delay_seconds))
+        self.audio_converter = audio_converter
 
     def __call__(self, text: str) -> None:
         self.speak(text)
@@ -265,15 +313,37 @@ class TextToSpeech:
             destination=destination,
         )
 
+    def render(self, text: str) -> SynthesizedAudio | None:
+        """Create the final buffer after optional in-memory voice conversion."""
+
+        audio = self.synthesize(text)
+        if audio is None or self.audio_converter is None:
+            return audio
+
+        converted = self.audio_converter.convert(audio)
+        if not isinstance(converted, SynthesizedAudio):
+            raise TTSPlaybackError(
+                "Audio converter returned an invalid result; expected SynthesizedAudio."
+            )
+        return converted
+
+    def play_audio(self, audio: SynthesizedAudio) -> None:
+        """Play an already synthesized or converted buffer directly."""
+
+        DirectAudioPlayer(self.output_device).play(audio)
+
     def speak(self, text: str) -> None:
         normalized = str(text).strip()
         if not normalized:
             return
 
-        if self.output_device is None:
+        # Preserve SAPI's original direct path when no conversion or explicit
+        # routing is requested. RVC must always use the buffer path so the
+        # converted result, not the source TTS voice, reaches the speakers.
+        if self.audio_converter is None and self.output_device is None:
             self._speak_to_system_default(normalized)
         else:
-            self._speak_to_selected_device(normalized)
+            self._speak_to_audio_buffer(normalized)
 
     def _speak_to_system_default(self, text: str) -> None:
         """Preserve the original pyttsx3 behavior when no device is selected."""
@@ -293,24 +363,14 @@ class TextToSpeech:
         finally:
             stop_talking()
 
-    def _speak_to_selected_device(self, text: str) -> None:
-        synthesized = self.synthesize(text)
-        if synthesized is None:
+    def _speak_to_audio_buffer(self, text: str) -> None:
+        final_audio = self.render(text)
+        if final_audio is None:
             return
 
-        playback, playback_rate = _prepare_output_audio(
-            synthesized.samples,
-            synthesized.sample_rate,
-            self.output_device,
-        )
         try:
             start_talking(text)
-            sd.play(
-                playback,
-                samplerate=playback_rate,
-                device=self.output_device,
-                blocking=True,
-            )
+            self.play_audio(final_audio)
             time.sleep(self.mouth_end_delay_seconds)
         finally:
             stop_talking()
@@ -323,6 +383,7 @@ def create_speaker(
     rate: int = 175,
     volume: float = 1.0,
     mouth_end_delay_seconds: float = MOUTH_END_DELAY_SECONDS,
+    audio_converter: AudioConverter | None = None,
 ) -> TextToSpeech:
     """Create a configured speaker callable for ``ConversationService``."""
 
@@ -332,6 +393,7 @@ def create_speaker(
         rate=rate,
         volume=volume,
         mouth_end_delay_seconds=mouth_end_delay_seconds,
+        audio_converter=audio_converter,
     )
 
 
