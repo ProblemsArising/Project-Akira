@@ -1,9 +1,9 @@
 # Internal RVC inference
 
-Issue #38 adds an application-owned RVC boundary that accepts the
-`SynthesizedAudio` buffer produced by `audio.tts` and returns another
-`SynthesizedAudio` buffer. Issue #39 connects that final buffer to direct
-blocking playback through Akira's selected output device or the system default.
+Project Akira owns the complete voice-conversion route. The TTS stage produces
+a `SynthesizedAudio` buffer, RVC converts that buffer in memory, and Akira plays
+the final result directly through the selected output device or the Windows
+system default.
 
 ## Optional runtime
 
@@ -37,7 +37,7 @@ python -m pip install --force-reinstall -r requirements-rvc-cuda.txt
 Verify the runtime before loading a real voice model:
 
 ```powershell
-python -c "import infer_rvc_python, torch; print('RVC import: OK'); print('Torch:', torch.__version__); print('CUDA:', torch.cuda.is_available(), torch.version.cuda)"
+python -c "import torch; import infer_rvc_python; print('RVC import: OK'); print('Torch:', torch.__version__); print('CUDA:', torch.cuda.is_available(), torch.version.cuda)"
 ```
 
 Do not add `pip==24.0` to `requirements-rvc.txt`: pip should be downgraded as
@@ -47,6 +47,19 @@ The pinned wrapper requires Python 3.10 and may also require FFmpeg and the
 Microsoft C++ build tools on Windows. Keeping it optional means normal Akira
 installs and unit tests do not import PyTorch or load voice models unless voice
 conversion is enabled.
+
+## No virtual audio device required
+
+The internal path is:
+
+```text
+text -> pyttsx3 WAV -> SynthesizedAudio -> RVC -> final SynthesizedAudio -> output device
+```
+
+No stage records from a virtual microphone or sends source speech through a
+loopback cable. VB-CABLE, VoiceMeeter, and an external voice changer are not
+runtime requirements. They remain optional only for users who intentionally
+route Akira's final audio into unrelated third-party software.
 
 ## Converting and playing TTS directly
 

@@ -44,6 +44,9 @@ Akira combines a FastAPI backend, browser-based interface, native desktop window
 - Microphone voice-activity detection and calibration
 - Selectable input and output devices
 - Local `pyttsx3` text-to-speech
+- In-process TTS-to-RVC conversion with direct playback to the selected output device
+- Final-waveform lip sync for converted speech
+- No VB-CABLE or external voice-changer application required
 - Independent controls for listening, transcription, and spoken replies
 
 ### Built-in avatar
@@ -297,6 +300,7 @@ Detailed technical notes are available under [`docs`](docs/), including:
 - [Model and backend selector](docs/model_backend_selector.md)
 - [Avatar output backends](docs/avatar_output_backends.md)
 - [Audio devices](docs/audio_devices.md)
+- [Internal RVC inference and direct playback](docs/rvc_inference.md)
 - [Windows installer](docs/windows_installer.md)
 
 ## Project structure
@@ -340,7 +344,7 @@ Development is tracked through [GitHub issues](https://github.com/ProblemsArisin
 - The Windows installer is currently unsigned.
 - Language models are not bundled and may require substantial storage, RAM, or VRAM.
 - Managed runtime and model performance depends heavily on local hardware and drivers.
-- Built-in RVC voice conversion is not yet implemented.
+- Voice-model discovery and selection are not yet exposed in the WebUI; until that selector lands, internal RVC must be configured through the Python API.
 - Generic OpenAI-compatible servers do not expose all LM Studio or managed llama.cpp model-management and reasoning controls.
 - The transparent avatar overlay is display-only and intentionally uses a fixed-size interaction model.
 
