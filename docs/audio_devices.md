@@ -57,14 +57,10 @@ python assistant.py --set-output-device default
 ```powershell
 python assistant.py --test-output
 ```
+When an explicit output device is configured, pyttsx3 first renders speech to a temporary WAV file and Project Akira plays that file through the selected PortAudio output. This routes ordinary or RVC-converted speech directly to speakers, headphones, or another selected playback endpoint without changing Windows per-application audio settings.
 
-When an explicit output device is configured, pyttsx3 first renders speech to a
-temporary WAV file and Project Akira plays that file through the selected
-PortAudio output. This allows direct routing to speakers, headphones or a
-virtual cable without changing Windows per-application audio settings.
-
-When no explicit output is selected, the original direct pyttsx3 playback path
-is preserved.
+Built-in voice conversion does not require VB-CABLE, VoiceMeeter, a loopback input, or an external voice-changer application. A virtual cable remains an optional output choice only when the user deliberately wants to send Akira's audio to third-party software.
+When no explicit output is selected, the original direct pyttsx3 playback path is preserved for unconverted speech. Converted speech still uses Akira's in-memory buffer path and plays to the Windows default output device.
 
 ## Reusable API
 
